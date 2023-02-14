@@ -10,56 +10,87 @@ import (
 )
 
 func TestConfigureLevel(t *testing.T) {
-	log := logrus.New()
+	// *logrus.Logger
+	log1 := logrus.New()
+	// *logrus.Field
+	log2 := logrus.New().WithFields(logrus.Fields{"name": "elephant"})
 
 	defer os.Unsetenv("LOG_LEVEL")
 
 	// Default level is INFO
-	Configure(log)
-	assert.Equal(t, logrus.InfoLevel, log.GetLevel())
+	Configure(log1)
+	Configure(log2)
+	assert.Equal(t, logrus.InfoLevel, log1.GetLevel())
+	assert.Equal(t, logrus.InfoLevel, log2.Logger.GetLevel())
 
 	// Unparseable level => INFO
 	os.Setenv("LOG_LEVEL", "garbage")
-	Configure(log)
-	assert.Equal(t, logrus.InfoLevel, log.GetLevel())
+	Configure(log1)
+	Configure(log2)
+	assert.Equal(t, logrus.InfoLevel, log1.GetLevel())
+	assert.Equal(t, logrus.InfoLevel, log2.Logger.GetLevel())
 
 	os.Setenv("LOG_LEVEL", "warning")
-	Configure(log)
-	assert.Equal(t, logrus.WarnLevel, log.GetLevel())
+	Configure(log1)
+	Configure(log2)
+	assert.Equal(t, logrus.WarnLevel, log1.GetLevel())
+	assert.Equal(t, logrus.WarnLevel, log2.Logger.GetLevel())
 
 	os.Setenv("LOG_LEVEL", "WARN")
-	Configure(log)
-	assert.Equal(t, logrus.WarnLevel, log.GetLevel())
+	Configure(log1)
+	Configure(log2)
+	assert.Equal(t, logrus.WarnLevel, log1.GetLevel())
+	assert.Equal(t, logrus.WarnLevel, log2.Logger.GetLevel())
 
 	os.Setenv("LOG_LEVEL", "error")
-	Configure(log)
-	assert.Equal(t, logrus.ErrorLevel, log.GetLevel())
+	Configure(log1)
+	Configure(log2)
+	assert.Equal(t, logrus.ErrorLevel, log1.GetLevel())
+	assert.Equal(t, logrus.ErrorLevel, log2.Logger.GetLevel())
 }
 
 func TestConfigureFormatter(t *testing.T) {
-	log := logrus.New()
+	// *logrus.Logger
+	log1 := logrus.New()
+	// *logrus.Field
+	log2 := logrus.New().WithFields(logrus.Fields{"name": "elephant"})
 
 	defer os.Unsetenv("LOG_FORMAT")
 
 	// Default is production, i.e. JSON output
 	{
-		Configure(log)
-		_, ok := log.Formatter.(*logrus.JSONFormatter)
+		Configure(log1)
+		_, ok := log1.Formatter.(*logrus.JSONFormatter)
+		assert.True(t, ok)
+	}
+	{
+		Configure(log2)
+		_, ok := log2.Logger.Formatter.(*logrus.JSONFormatter)
 		assert.True(t, ok)
 	}
 
 	// Unknown format => JSON output
 	os.Setenv("LOG_FORMAT", "yaml")
 	{
-		Configure(log)
-		_, ok := log.Formatter.(*logrus.JSONFormatter)
+		Configure(log1)
+		_, ok := log1.Formatter.(*logrus.JSONFormatter)
+		assert.True(t, ok)
+	}
+	{
+		Configure(log2)
+		_, ok := log2.Logger.Formatter.(*logrus.JSONFormatter)
 		assert.True(t, ok)
 	}
 
 	os.Setenv("LOG_FORMAT", "development")
 	{
-		Configure(log)
-		_, ok := log.Formatter.(*logrus.TextFormatter)
+		Configure(log1)
+		_, ok := log1.Formatter.(*logrus.TextFormatter)
+		assert.True(t, ok)
+	}
+	{
+		Configure(log2)
+		_, ok := log2.Logger.Formatter.(*logrus.TextFormatter)
 		assert.True(t, ok)
 	}
 }

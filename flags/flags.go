@@ -3,16 +3,21 @@ package flags
 import (
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/replicate/go/logging"
 	"gopkg.in/launchdarkly/go-sdk-common.v2/lduser"
 	ld "gopkg.in/launchdarkly/go-server-sdk.v5"
 )
 
 var currentClient *ld.LDClient
+var log = logging.New("flags")
+
+func init() {
+	logging.Configure(log)
+}
 
 func Init(key string) {
 	config := ld.Config{
-		Logging: configureLogger(log.StandardLogger()),
+		Logging: configureLogger(log),
 	}
 
 	if key == "" {
@@ -21,11 +26,11 @@ func Init(key string) {
 
 	client, err := ld.MakeCustomClient(key, config, 5*time.Second)
 	if err != nil {
-		log.WithError(err).Warn("Failed to make LaunchDarkly client")
+		log.WithError(err).Warn("failed to make LaunchDarkly client")
 	}
 
 	if !client.Initialized() {
-		log.Warn("Failed to initialize LaunchDarkly client")
+		log.Warn("failed to initialize LaunchDarkly client")
 	}
 
 	currentClient = client
