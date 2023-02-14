@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-go@v3
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Build
+      run: script/build
+    - name: Test
+      run: script/build
+
+  lint:
+    name: Lint
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-go@v3
+      with:
+        go-version-file: go.mod
+        cache: false # for this job we rely on golangci-lint-action's cache
+    - name: Lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: v1.51
