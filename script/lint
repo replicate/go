@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -eu
+
+cd "$(dirname "$0")"
+cd ..
+
+exec go run github.com/golangci/golangci-lint/cmd/golangci-lint run

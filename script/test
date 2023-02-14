@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -eu
+
+cd "$(dirname "$0")"
+cd ..
+
+# Run the tests for the entire repository.
+#
+# You can change what this does by passing paths or other arguments to
+# gotestsum. See https://github.com/gotestyourself/gotestsum#documentation
+#
+exec go run gotest.tools/gotestsum "$@"

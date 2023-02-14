@@ -1,0 +1,6 @@
+[linters]
+# This is a list of linters we enable beyond the default set.
+enable = [
+  "gocritic",
+  "goimports"
+]
