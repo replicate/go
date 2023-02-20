@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"go.opentelemetry.io/contrib/detectors/gcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -58,12 +59,20 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 	}
 
 	// The default resource uses the OTEL_SERVICE_NAME environment variable.
-	rsrc, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL, defaultSpanAttributes()...),
+	defaultResource := resource.Default()
+	detectedResource, err := resource.New(
+		ctx,
+		resource.WithSchemaURL(semconv.SchemaURL),
+		resource.WithDetectors(gcp.NewDetector()),
+		resource.WithAttributes(defaultSpanAttributes()...),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create resource for tracer provider: %w", err)
+		return nil, fmt.Errorf("failed to detect resource attributes: %w", err)
+	}
+
+	rsrc, err := resource.Merge(defaultResource, detectedResource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge resources: %w", err)
 	}
 
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(rsrc))
@@ -72,11 +81,29 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 }
 
 func defaultSpanAttributes() []attribute.KeyValue {
-	hostName := os.Getenv("HOSTNAME")
+	attrs := []attribute.KeyValue{}
 
-	return []attribute.KeyValue{
-		semconv.K8SPodNameKey.String(hostName),
-		semconv.ServiceInstanceIDKey.String(hostName),
-		semconv.ServiceVersionKey.String(version.Version()),
+	attrs = append(attrs, semconv.ServiceVersionKey.String(version.Version()))
+
+	if hostname, err := os.Hostname(); err == nil {
+		attrs = append(attrs, semconv.ServiceInstanceIDKey.String(hostname))
 	}
+
+	// Detect when running on Fly.
+	//
+	// TODO: it might be nice to turn this into a resource.Detector at some point.
+	attrs = tryAddEnvAttribute(attrs, "FLY_ALLOC_ID", "fly.alloc_id")
+	attrs = tryAddEnvAttribute(attrs, "FLY_APP_NAME", "fly.app_name")
+	attrs = tryAddEnvAttribute(attrs, "FLY_IMAGE_REF", "fly.image_ref")
+	attrs = tryAddEnvAttribute(attrs, "FLY_PUBLIC_IP", "fly.public_ip")
+	attrs = tryAddEnvAttribute(attrs, "FLY_REGION", "fly.region")
+
+	return attrs
+}
+
+func tryAddEnvAttribute(attrs []attribute.KeyValue, envName string, key string) []attribute.KeyValue {
+	if value, ok := os.LookupEnv(envName); ok {
+		attrs = append(attrs, attribute.String(key, value))
+	}
+	return attrs
 }
