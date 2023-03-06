@@ -7,12 +7,12 @@ require (
 	github.com/sirupsen/logrus v1.9.0
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/stretchr/testify v1.8.2
-	go.opentelemetry.io/contrib/detectors/gcp v1.14.0
-	go.opentelemetry.io/otel v1.13.0
+	go.opentelemetry.io/contrib/detectors/gcp v1.15.0
+	go.opentelemetry.io/otel v1.14.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.13.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.13.0
-	go.opentelemetry.io/otel/sdk v1.13.0
-	go.opentelemetry.io/otel/trace v1.13.0
+	go.opentelemetry.io/otel/sdk v1.14.0
+	go.opentelemetry.io/otel/trace v1.14.0
 	golang.org/x/tools v0.6.0
 	gopkg.in/launchdarkly/go-sdk-common.v2 v2.5.1
 	gopkg.in/launchdarkly/go-server-sdk.v5 v5.10.1
@@ -30,7 +30,7 @@ require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/Djarvur/go-err113 v0.0.0-20210108212216-aea10b59be24 // indirect
 	github.com/GaijinEntertainment/go-exhaustruct/v2 v2.3.0 // indirect
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.11.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.11.2 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/OpenPeeDeeP/depguard v1.1.1 // indirect
 	github.com/alexkohler/prealloc v1.0.0 // indirect
