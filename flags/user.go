@@ -3,13 +3,13 @@ package flags
 import (
 	"net/http"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/speps/go-hashids/v2"
-	"gopkg.in/launchdarkly/go-sdk-common.v2/lduser"
 )
 
 var userHashID *hashids.HashID
-var systemUser = lduser.NewUserBuilder("__system__").Build()
-var unknownUser = lduser.NewUserBuilder("__unknown__").Build()
+var systemUser = ldcontext.New("__system__")
+var unknownUser = ldcontext.New("__unknown__")
 
 func init() {
 	hd := hashids.NewData()
@@ -17,7 +17,7 @@ func init() {
 	userHashID, _ = hashids.NewWithData(hd)
 }
 
-func GetUser(id int, r *http.Request) lduser.User {
+func GetUser(id int, r *http.Request) ldcontext.Context {
 	if id == 0 {
 		return unknownUser
 	}
@@ -27,12 +27,12 @@ func GetUser(id int, r *http.Request) lduser.User {
 		return unknownUser
 	}
 
-	userBuilder := lduser.NewUserBuilder(key)
+	userBuilder := ldcontext.NewBuilder(key)
 
 	// For now we rely on web to have populated other fields (name, is_staff,
 	// etc.) in LaunchDarkly.
 	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-		userBuilder.IP(ip)
+		userBuilder.SetString("ip", ip)
 	}
 
 	return userBuilder.Build()
