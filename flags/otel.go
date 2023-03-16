@@ -3,14 +3,14 @@ package flags
 import (
 	"fmt"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"gopkg.in/launchdarkly/go-sdk-common.v2/lduser"
 )
 
 // SetSpanAttributes will record the values of all feature flags on the passed
 // span under the "flags." namespace.
-func SetSpanAttributes(user *lduser.User, span trace.Span) {
+func SetSpanAttributes(user *ldcontext.Context, span trace.Span) {
 	if currentClient == nil {
 		return
 	}

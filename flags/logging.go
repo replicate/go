@@ -3,13 +3,12 @@ package flags
 import (
 	"io"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/launchdarkly/go-server-sdk/v6/ldcomponents"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/launchdarkly/go-sdk-common.v2/ldlog"
-	"gopkg.in/launchdarkly/go-server-sdk.v5/interfaces"
-	"gopkg.in/launchdarkly/go-server-sdk.v5/ldcomponents"
 )
 
-func configureLogger(log logrus.FieldLogger) interfaces.LoggingConfigurationFactory {
+func configureLogger(log logrus.FieldLogger) *ldcomponents.LoggingConfigurationBuilder {
 	if log == nil {
 		l := logrus.New()
 		l.SetOutput(io.Discard)
@@ -17,20 +16,15 @@ func configureLogger(log logrus.FieldLogger) interfaces.LoggingConfigurationFact
 	}
 	log = log.WithField("component", "launchdarkly")
 
-	return &logCreator{log: log}
-}
-
-type logCreator struct {
-	log logrus.FieldLogger
-}
-
-func (c *logCreator) CreateLoggingConfiguration(b interfaces.BasicConfiguration) (interfaces.LoggingConfiguration, error) { // nolint:gocritic
 	logger := ldlog.NewDefaultLoggers()
-	logger.SetBaseLoggerForLevel(ldlog.Debug, &wrapLog{c.log.Debugln, c.log.Debugf})
-	logger.SetBaseLoggerForLevel(ldlog.Info, &wrapLog{c.log.Infoln, c.log.Infof})
-	logger.SetBaseLoggerForLevel(ldlog.Warn, &wrapLog{c.log.Warnln, c.log.Warnf})
-	logger.SetBaseLoggerForLevel(ldlog.Error, &wrapLog{c.log.Errorln, c.log.Errorf})
-	return ldcomponents.Logging().Loggers(logger).CreateLoggingConfiguration(b)
+	logger.SetBaseLoggerForLevel(ldlog.Debug, &wrapLog{log.Debugln, log.Debugf})
+	logger.SetBaseLoggerForLevel(ldlog.Info, &wrapLog{log.Infoln, log.Infof})
+	logger.SetBaseLoggerForLevel(ldlog.Warn, &wrapLog{log.Warnln, log.Warnf})
+	logger.SetBaseLoggerForLevel(ldlog.Error, &wrapLog{log.Errorln, log.Errorf})
+
+	logging := ldcomponents.Logging().Loggers(logger)
+
+	return logging
 }
 
 type wrapLog struct {

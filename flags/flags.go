@@ -3,9 +3,9 @@ package flags
 import (
 	"time"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	ld "github.com/launchdarkly/go-server-sdk/v6"
 	"github.com/replicate/go/logging"
-	"gopkg.in/launchdarkly/go-sdk-common.v2/lduser"
-	ld "gopkg.in/launchdarkly/go-server-sdk.v5"
 )
 
 var currentClient *ld.LDClient
@@ -43,30 +43,30 @@ func Close() error {
 	return currentClient.Close()
 }
 
-func Flag(user *lduser.User, name string) bool {
-	return lookupDefault(user, name, false)
+func Flag(context *ldcontext.Context, name string) bool {
+	return lookupDefault(context, name, false)
 }
 
 func FlagSystem(name string) bool {
 	return lookupDefault(&systemUser, name, false)
 }
 
-func KillSwitch(user *lduser.User, name string) bool {
-	return lookupDefault(user, name, true)
+func KillSwitch(context *ldcontext.Context, name string) bool {
+	return lookupDefault(context, name, true)
 }
 
 func KillSwitchSystem(name string) bool {
 	return lookupDefault(&systemUser, name, true)
 }
 
-func lookupDefault(user *lduser.User, name string, defaultVal bool) bool {
+func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) bool {
 	if currentClient == nil {
 		return defaultVal
 	}
 	// BoolVariation and friends only return an error in the event that flags are
 	// not available (e.g. if LaunchDarkly is having an outage or we've
 	// misconfigured the client).
-	result, err := currentClient.BoolVariation(name, *user, defaultVal)
+	result, err := currentClient.BoolVariation(name, *context, defaultVal)
 	if err != nil {
 		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
 	}

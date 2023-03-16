@@ -3,14 +3,14 @@ package flags
 import (
 	"testing"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/launchdarkly/go-sdk-common.v2/lduser"
 )
 
 func TestFlagDefault(t *testing.T) {
-	testuser := lduser.NewUserBuilder("__test__").Build()
+	testcontext := ldcontext.New("__test__")
 
-	require.False(t, Flag(&testuser, "anyflag"))
+	require.False(t, Flag(&testcontext, "anyflag"))
 }
 
 func TestFlagSystemDefault(t *testing.T) {
@@ -18,9 +18,9 @@ func TestFlagSystemDefault(t *testing.T) {
 }
 
 func TestKillSwitchDefault(t *testing.T) {
-	testuser := lduser.NewUserBuilder("__test__").Build()
+	testcontext := ldcontext.New("__test__")
 
-	require.True(t, KillSwitch(&testuser, "anyflag"))
+	require.True(t, KillSwitch(&testcontext, "anyflag"))
 }
 
 func TestKillSwitchSystemDefault(t *testing.T) {
