@@ -1,9 +1,11 @@
 package flags
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,4 +30,19 @@ func TestGetUserIP(t *testing.T) {
 	r.Header.Set("CF-Connecting-IP", "203.0.113.24")
 
 	require.Equal(t, GetUser(12345, r).GetValue("ip").StringValue(), "203.0.113.24")
+}
+
+func TestWithFlagContextStoresValueOnGoContext(t *testing.T) {
+	testUser := ldcontext.NewBuilder("giraffe").Build()
+	ctx := WithFlagContext(context.Background(), testUser)
+	retrievedUser := FlagContextFromContext(ctx)
+
+	require.Equal(t, testUser, retrievedUser)
+}
+
+func TestFlagContextFromContextRetrievesUnknownUserIfNothingSaved(t *testing.T) {
+	bg := context.Background()
+	retrievedUser := FlagContextFromContext(bg)
+
+	require.Equal(t, unknownUser, retrievedUser)
 }
