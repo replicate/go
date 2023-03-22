@@ -5,12 +5,11 @@ import (
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
-// SetSpanAttributes will record the values of all feature flags on the passed
-// span under the "flags." namespace.
-func SetSpanAttributes(user *ldcontext.Context, span trace.Span) {
+// SpanAttributes returns a slice of span attributes containing the values of
+// all feature flags (under the "flags." namespace).
+func SpanAttributes(user *ldcontext.Context) (attrs []attribute.KeyValue) {
 	if currentClient == nil {
 		return
 	}
@@ -21,12 +20,14 @@ func SetSpanAttributes(user *ldcontext.Context, span trace.Span) {
 		spanKey := fmt.Sprintf("flags.%s", key)
 		switch {
 		case value.IsBool():
-			span.SetAttributes(attribute.Bool(spanKey, value.BoolValue()))
+			attrs = append(attrs, attribute.Bool(spanKey, value.BoolValue()))
 		case value.IsNull():
 			// Do nothing!
 		default:
 			// For all other value types, use a string representation
-			span.SetAttributes(attribute.String(spanKey, value.String()))
+			attrs = append(attrs, attribute.String(spanKey, value.String()))
 		}
 	}
+
+	return
 }
