@@ -1,56 +1,112 @@
 package logging
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"strings"
 
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+var baseLogger = zap.Must(NewConfig().Build())
+
+type contextKey int
+
+const (
+	contextFieldsKey contextKey = iota
+)
+
+func NewConfig() zap.Config {
+	var config zap.Config
+
+	development := os.Getenv("LOG_FORMAT") == "development"
+
+	if development {
+		config = newDevelopmentConfig()
+	} else {
+		config = newProductionConfig()
+	}
+
+	level := os.Getenv("LOG_LEVEL")
+	// Temporarily treat "warning" like "warn" for backwards compatibility with
+	// logrus.
+	if strings.ToLower(level) == "warning" {
+		level = "warn"
+	}
+
+	if lvl, err := zap.ParseAtomicLevel(level); err == nil {
+		config.Level = lvl
+	}
+
+	return config
+}
+
+func newDevelopmentConfig() zap.Config {
+	return zap.Config{
+		Level:             zap.NewAtomicLevelAt(zap.DebugLevel),
+		Development:       true,
+		DisableStacktrace: true,
+		Encoding:          "console",
+		EncoderConfig:     newDevelopmentEncoderConfig(),
+		OutputPaths:       []string{"stderr"},
+	}
+}
+
+func newProductionConfig() zap.Config {
+	return zap.Config{
+		Level:       zap.NewAtomicLevelAt(zap.InfoLevel),
+		Development: false,
+		Sampling: &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 100,
+		},
+		Encoding:      "json",
+		EncoderConfig: newProductionEncoderConfig(),
+		OutputPaths:   []string{"stdout"},
+	}
+}
+
+func newDevelopmentEncoderConfig() zapcore.EncoderConfig {
+	encoderConfig := newProductionEncoderConfig()
+	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	encoderConfig.NameKey = ""
+	return encoderConfig
+}
+
+func newProductionEncoderConfig() zapcore.EncoderConfig {
+	return zapcore.EncoderConfig{
+		TimeKey:        "timestamp",
+		LevelKey:       "severity",
+		NameKey:        "logger",
+		CallerKey:      "caller",
+		FunctionKey:    zapcore.OmitKey,
+		MessageKey:     "message",
+		StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,
+		EncodeTime:     zapcore.ISO8601TimeEncoder,
+		EncodeDuration: zapcore.StringDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
+	}
+}
 
 // New creates a new logger with a default "logger" field so we can identify the
 // source of log messages.
-func New(name string) *logrus.Entry {
-	log := logrus.New()
-
-	Configure(log)
-
-	return log.WithFields(logrus.Fields{
-		"logger": name,
-	})
+func New(name string) *zap.Logger {
+	return baseLogger.Named(name)
 }
 
-func Configure(logger logrus.FieldLogger) {
-	var formatter logrus.Formatter
-	var level logrus.Level
-
-	format := os.Getenv("LOG_FORMAT")
-	if format == "development" {
-		formatter = &logrus.TextFormatter{}
-	} else {
-		formatter = &logrus.JSONFormatter{
-			FieldMap: logrus.FieldMap{
-				logrus.FieldKeyLevel: "severity",
-				logrus.FieldKeyMsg:   "message",
-				logrus.FieldKeyTime:  "timestamp",
-			},
-		}
+func GetFields(ctx context.Context) []zap.Field {
+	f := ctx.Value(contextFieldsKey)
+	if f == nil {
+		return []zap.Field{}
 	}
+	return f.([]zap.Field)
+}
 
-	lvl, err := logrus.ParseLevel(os.Getenv("LOG_LEVEL"))
-	if err != nil {
-		level = logrus.InfoLevel
-	} else {
-		level = lvl
-	}
-
-	switch l := logger.(type) {
-	case *logrus.Logger:
-		l.SetFormatter(formatter)
-		l.SetLevel(level)
-	case *logrus.Entry:
-		l.Logger.SetFormatter(formatter)
-		l.Logger.SetLevel(level)
-	default:
-		panic(fmt.Sprintf("don't know how to configure logger %v", l))
-	}
+func AddFields(ctx context.Context, fields ...zap.Field) context.Context {
+	f := GetFields(ctx)
+	f = append(f, fields...)
+	return context.WithValue(ctx, contextFieldsKey, f)
 }

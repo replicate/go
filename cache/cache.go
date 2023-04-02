@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	log    = logging.New("cache")
+	logger = logging.New("cache")
 	tracer = telemetry.Tracer("go", "cache")
 )
 
@@ -55,6 +55,7 @@ func NewCache[T any](
 }
 
 func (c *Cache[T]) Prepare(ctx context.Context) error {
+	log := logger.Sugar()
 	if c == nil {
 		log.Warnf("cache not configured: prepare is a no-op")
 		return nil
@@ -63,6 +64,7 @@ func (c *Cache[T]) Prepare(ctx context.Context) error {
 }
 
 func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
+	log := logger.Sugar()
 	if c == nil {
 		log.Warnf("cache not configured: fetching data directly")
 		return fetcher(ctx, key)
