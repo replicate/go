@@ -5,19 +5,18 @@ import (
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	ld "github.com/launchdarkly/go-server-sdk/v6"
+
 	"github.com/replicate/go/logging"
 )
 
 var currentClient *ld.LDClient
-var log = logging.New("flags")
-
-func init() {
-	logging.Configure(log)
-}
+var logger = logging.New("flags")
 
 func Init(key string) {
+	log := logger.Sugar()
+
 	config := ld.Config{
-		Logging: configureLogger(log),
+		Logging: configureLogger(logger),
 	}
 
 	if key == "" {
@@ -26,7 +25,7 @@ func Init(key string) {
 
 	client, err := ld.MakeCustomClient(key, config, 5*time.Second)
 	if err != nil {
-		log.WithError(err).Warn("failed to make LaunchDarkly client")
+		log.Warnw("failed to make LaunchDarkly client", "error", err)
 	}
 
 	if !client.Initialized() {
@@ -60,6 +59,8 @@ func KillSwitchSystem(name string) bool {
 }
 
 func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) bool {
+	log := logger.Sugar()
+
 	if currentClient == nil {
 		return defaultVal
 	}

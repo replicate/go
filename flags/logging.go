@@ -1,26 +1,23 @@
 package flags
 
 import (
-	"io"
-
 	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
 	"github.com/launchdarkly/go-server-sdk/v6/ldcomponents"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
-func configureLogger(log logrus.FieldLogger) *ldcomponents.LoggingConfigurationBuilder {
+func configureLogger(log *zap.Logger) *ldcomponents.LoggingConfigurationBuilder {
 	if log == nil {
-		l := logrus.New()
-		l.SetOutput(io.Discard)
-		log = l
+		log = zap.NewNop()
 	}
-	log = log.WithField("component", "launchdarkly")
+	log = log.With(zap.String("component", "launchdarkly"))
 
+	l := log.Sugar()
 	logger := ldlog.NewDefaultLoggers()
-	logger.SetBaseLoggerForLevel(ldlog.Debug, &wrapLog{log.Debugln, log.Debugf})
-	logger.SetBaseLoggerForLevel(ldlog.Info, &wrapLog{log.Infoln, log.Infof})
-	logger.SetBaseLoggerForLevel(ldlog.Warn, &wrapLog{log.Warnln, log.Warnf})
-	logger.SetBaseLoggerForLevel(ldlog.Error, &wrapLog{log.Errorln, log.Errorf})
+	logger.SetBaseLoggerForLevel(ldlog.Debug, &wrapLog{l.Debugln, l.Debugf})
+	logger.SetBaseLoggerForLevel(ldlog.Info, &wrapLog{l.Infoln, l.Infof})
+	logger.SetBaseLoggerForLevel(ldlog.Warn, &wrapLog{l.Warnln, l.Warnf})
+	logger.SetBaseLoggerForLevel(ldlog.Error, &wrapLog{l.Errorln, l.Errorf})
 
 	logging := ldcomponents.Logging().Loggers(logger)
 

@@ -15,9 +15,11 @@ import (
 var logger = logging.New("errors")
 
 func Init() {
+	log := logger.Sugar()
+
 	sentryDSN := os.Getenv("SENTRY_DSN")
 	if sentryDSN == "" {
-		logger.Warn("SENTRY_DSN not set: skipping Sentry initialization!")
+		log.Warn("SENTRY_DSN not set: skipping Sentry initialization!")
 		return
 	}
 
@@ -28,7 +30,7 @@ func Init() {
 		Release:          version.Version(),
 	})
 	if err != nil {
-		logger.Warnf("Failed to initialize Sentry client: %v", err)
+		log.Warnw("Failed to initialize Sentry client", "error", err)
 	}
 }
 
