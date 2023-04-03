@@ -16,8 +16,11 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/replicate/go/logging"
 	"github.com/replicate/go/version"
 )
+
+var logger = logging.New("telemetry")
 
 type Telemetry struct {
 	*sdktrace.TracerProvider
@@ -31,6 +34,7 @@ func Start(ctx context.Context) (*Telemetry, error) {
 		return nil, err
 	}
 
+	otel.SetErrorHandler(ErrorHandler{})
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(
 		propagation.NewCompositeTextMapPropagator(
