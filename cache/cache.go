@@ -8,6 +8,7 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,9 @@ import (
 var (
 	logger = logging.New("cache")
 	tracer = telemetry.Tracer("go", "cache")
+
+	// internal error indicating a hard cache miss
+	errCacheMiss = errors.New("value not in cache")
 )
 
 type Fetcher[T any] func(ctx context.Context, key string) (T, error)
@@ -63,13 +67,40 @@ func (c *Cache[T]) Prepare(ctx context.Context) error {
 	return c.locker.Prepare(ctx)
 }
 
+// Get fetches an item with the given key from cache. In the event of a cache
+// miss or an error communicating with the cache, it will fall back to fetching
+// the item from source using the passed fetcher.
 func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
-	log := logger.Sugar()
+	log := logger.With(logging.GetFields(ctx)...).Sugar()
+
 	if c == nil {
 		log.Warnf("cache not configured: fetching data directly")
 		return fetcher(ctx, key)
 	}
 
+	value, err = c.fetch(ctx, key, fetcher)
+	if err != nil {
+		// If fetching from cache threw any error other than a cache miss, we
+		// immediately fall back to fetching data from upstream.
+		//
+		// This is the only way we can avoid further amplifying load on the source
+		// of the data (hidden behind the fetcher) when the cache isn't behaving.
+		if err != errCacheMiss {
+			log.Warnw("cache fetch failed: falling back to direct fetch", "error", err)
+			return fetcher(ctx, key)
+		}
+
+		// Otherwise, it's a cache miss.
+		value, err = c.fill(ctx, key, fetcher)
+	}
+
+	return value, err
+}
+
+// fetch attempts to retrieve the value from cache. In the event of a hard cache
+// miss it returns errCacheMiss, and for a soft miss it starts a goroutine to
+// refill the cache.
+func (c *Cache[T]) fetch(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
 	keys := c.keysFor(key)
 
 	result, err := c.client.MGet(ctx, keys.fresh, keys.data).Result()
@@ -85,24 +116,7 @@ func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (val
 
 	if data == nil {
 		// hard cache miss
-		ctx, span := tracer.Start(
-			ctx,
-			"cache.miss",
-			trace.WithAttributes(c.spanAttributes(key)...),
-			trace.WithAttributes(attribute.String("cache.miss", "hard")),
-		)
-		defer span.End()
-		value, err := fetcher(ctx, key)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return value, err
-		}
-		err = c.set(ctx, key, value)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return value, err
-		}
-		return value, nil
+		return value, errCacheMiss
 	}
 
 	if fresh == nil {
@@ -118,6 +132,37 @@ func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (val
 	err = json.Unmarshal([]byte(valueStr), &value)
 	if err != nil {
 		return value, err
+	}
+
+	return value, nil
+}
+
+// fill attempts to fetch a value from the upstream (using the passed fetcher)
+// and update the cache. It is called in the event of a hard cache miss.
+func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
+	log := logger.With(logging.GetFields(ctx)...).Sugar()
+
+	ctx, span := tracer.Start(
+		ctx,
+		"cache.miss",
+		trace.WithAttributes(c.spanAttributes(key)...),
+		trace.WithAttributes(attribute.String("cache.miss", "hard")),
+	)
+	defer span.End()
+
+	value, err = fetcher(ctx, key)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return value, err
+	}
+
+	err = c.set(ctx, key, value)
+	if err != nil {
+		// Errors encountered while filling the cache are not returned to the
+		// caller: we don't want a cache availability problem to be exposed if the
+		// value was already successfully fetched.
+		span.SetStatus(codes.Error, err.Error())
+		log.Warnw("cache fill failed", "error", err)
 	}
 
 	return value, nil
