@@ -20,7 +20,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.14.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/tools v0.7.0
-	gotest.tools/gotestsum v1.9.0
+	gotest.tools/gotestsum v1.10.0
 )
 
 require (
