@@ -2,8 +2,15 @@
 
 set -eu
 
+: "${GITHUB_ACTIONS:=}"
+
 cd "$(dirname "$0")"
 cd ..
+
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+  REDIS_URL=redis://
+  export REDIS_URL
+fi
 
 # Run the tests for the entire repository.
 #
