@@ -28,7 +28,7 @@ func TestLimiterIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(opts)
-	limiter := Limiter{Client: client}
+	limiter, _ := NewLimiter(client)
 	require.NoError(t, limiter.Prepare(ctx))
 
 	// result counters
@@ -76,7 +76,8 @@ func TestLimiterTakeWithNegativeInputsReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	limiter := Limiter{}
+	client := redis.NewClient(&redis.Options{})
+	limiter, _ := NewLimiter(client)
 	{
 		_, err := limiter.Take(ctx, "testkey", -1, 1, 1)
 		require.ErrorIs(t, err, ErrNegativeInput)
@@ -95,7 +96,8 @@ func TestLimiterSetOptionsWithNegativeInputsReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	limiter := Limiter{}
+	client := redis.NewClient(&redis.Options{})
+	limiter, _ := NewLimiter(client)
 	{
 		err := limiter.SetOptions(ctx, "testkey", -1, 1)
 		require.ErrorIs(t, err, ErrNegativeInput)

@@ -29,10 +29,11 @@ var (
 
 	ErrInvalidData   = errors.New("limiter: received invalid data")
 	ErrNegativeInput = errors.New("limiter: input values must be non-negative")
+	ErrNilClient     = errors.New("limiter: redis client is nil")
 )
 
 type Limiter struct {
-	Client redis.Cmdable
+	client redis.Cmdable
 }
 
 type Result struct {
@@ -42,10 +43,17 @@ type Result struct {
 	Reset     time.Duration // time until bucket is full
 }
 
+func NewLimiter(client redis.Cmdable) (Limiter, error) {
+	if client == nil {
+		return Limiter{}, ErrNilClient
+	}
+	return Limiter{client: client}, nil
+}
+
 // Prepare stores the limiter script in the Redis script cache so that it can be
 // more efficiently called with EVALSHA.
 func (l Limiter) Prepare(ctx context.Context) error {
-	return limiterScript.Load(ctx, l.Client).Err()
+	return limiterScript.Load(ctx, l.client).Err()
 }
 
 // Take requests a specified number of tokens from the token bucket stored in
@@ -69,7 +77,7 @@ func (l Limiter) Take(ctx context.Context, key string, tokens, rate, capacity in
 	if capacity < 0 {
 		return nil, fmt.Errorf("%w (capacity=%d)", ErrNegativeInput, capacity)
 	}
-	cmd := limiterScript.Run(ctx, l.Client, []string{key}, tokens, rate, capacity)
+	cmd := limiterScript.Run(ctx, l.client, []string{key}, tokens, rate, capacity)
 	return makeResult(tokens, cmd)
 }
 
@@ -92,11 +100,11 @@ func (l Limiter) SetOptions(ctx context.Context, key string, rate, capacity int)
 	if capacity < 0 {
 		return fmt.Errorf("%w (capacity=%d)", ErrNegativeInput, capacity)
 	}
-	err := l.Client.HSet(ctx, key, "rate", rate, "capacity", capacity).Err()
+	err := l.client.HSet(ctx, key, "rate", rate, "capacity", capacity).Err()
 	if err != nil {
 		return err
 	}
-	return l.Client.Expire(ctx, key, time.Minute).Err()
+	return l.client.Expire(ctx, key, time.Minute).Err()
 }
 
 func makeResult(tokens int, cmd *redis.Cmd) (*Result, error) {
