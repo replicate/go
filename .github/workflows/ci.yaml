@@ -10,6 +10,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      # Run redis so we can integration test the rate limiter
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-go@v4
