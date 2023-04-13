@@ -57,13 +57,9 @@ func (l Limiter) Prepare(ctx context.Context) error {
 }
 
 // Take requests a specified number of tokens from the token bucket stored in
-// the named key, while also specifying the default rate and capacity for the
+// the named key, while also specifying the desired rate and capacity for the
 // bucket. It returns the Result of the request, and the first error
 // encountered, if any.
-//
-// If the token bucket already exists at the given key, the rate and capacity
-// set in the bucket will be used, otherwise the values provided will be set
-// when creating the bucket.
 //
 // Note: if >1 tokens are requested the Result may indicate partial fulfillment
 // of the request by setting OK == false but Tokens > 0 on the Result.

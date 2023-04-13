@@ -11,12 +11,8 @@ local now = tonumber(time[1], 10) * 1e6 + tonumber(time[2], 10)
 
 -- Process arguments. All are optional.
 local tokens_requested = tonumber(ARGV[1], 10) or 1
-
--- If rate and capacity exist in the key, the arguments are ignored. This allows
--- for workflows where custom limits exist for users but are not known until
--- after the limiter has run.
-local rate = tonumber(state[3], 10) or tonumber(ARGV[2], 10) or default_rate
-local capacity = tonumber(state[4], 10) or tonumber(ARGV[3], 10) or default_capacity
+local rate = tonumber(ARGV[2], 10) or tonumber(state[3], 10) or default_rate
+local capacity = tonumber(ARGV[3], 10) or tonumber(state[4], 10) or default_capacity
 
 -- If this is a new limiter, the bucket is full
 local tokens = tonumber(state[1], 10) or capacity
