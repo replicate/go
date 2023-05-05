@@ -97,6 +97,13 @@ func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (val
 	return value, err
 }
 
+// Set updates the value stored in a given key with a provided object. This is
+// not always needed (as usually values are fetched using the provided
+// Fetcher[T]) but can be useful in some cases.
+func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
+	return c.set(ctx, key, value)
+}
+
 // fetch attempts to retrieve the value from cache. In the event of a hard cache
 // miss it returns errCacheMiss, and for a soft miss it starts a goroutine to
 // refill the cache.

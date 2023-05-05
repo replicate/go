@@ -145,3 +145,28 @@ func TestCacheFetchesOnRedisError(t *testing.T) {
 	assert.Equal(t, "value_for:elephant", v.Value)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
 }
+
+func TestCacheSet(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client, mock := redismock.NewClientMock()
+	cacheMock := mockWrapper{
+		ClientMock: mock,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCache[testObj](client, "objects", fresh, stale)
+
+	obj := testObj{Value: "value_for:elephant"}
+
+	cacheMock.ExpectCacheFill("elephant", obj)
+
+	err := cache.Set(ctx, "elephant", obj)
+
+	assert.NoError(t, err)
+}
