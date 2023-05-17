@@ -3,17 +3,17 @@ package lock
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/go-redis/redismock/v8"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-// TODO: these test don't really test the locking approach -- they just test
-// that we've implemented the various communications with Redis correctly. In
-// future it would be nice to have at least one functional test which ensures
-// that locking behaves as expected under concurrent access.
 
 func TestLockerTryAcquireReturnsLockWhenSetSucceeds(t *testing.T) {
 	ctx := context.Background()
@@ -148,4 +148,54 @@ func TestLockReleaseReturnsRedisErrors(t *testing.T) {
 
 	assert.ErrorContains(t, err, "boom")
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockTryAcquireIntegration(t *testing.T) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL is not set")
+	}
+
+	ctx := context.Background()
+
+	opts, err := redis.ParseURL(redisURL)
+	require.NoError(t, err)
+
+	client := redis.NewClient(opts)
+	locker := Locker{Client: client}
+
+	require.NoError(t, locker.Prepare(ctx))
+
+	start := make(chan struct{})
+	results := make(chan string, 50)
+	var wg sync.WaitGroup
+
+	// Start 50 goroutines which all attempt to acquire the lock at the same
+	// moment, synchronized by a channel closure.
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+			<-start
+
+			lock, err := locker.TryAcquire(ctx, "giraffe", 1*time.Second)
+			if err == ErrLockNotAcquired {
+				return
+			}
+			require.NoError(t, err)
+
+			results <- fmt.Sprintf("lock acquired by goroutine %d", id)
+			time.Sleep(100 * time.Millisecond)
+
+			require.NoError(t, lock.Release(ctx))
+		}(i)
+	}
+
+	// Release the goroutines!
+	close(start)
+	wg.Wait()
+
+	// Check that only one goroutine got the lock
+	require.Equal(t, 1, len(results))
 }
