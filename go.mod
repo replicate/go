@@ -3,7 +3,7 @@ module github.com/replicate/go
 go 1.19
 
 require (
-	github.com/getsentry/sentry-go v0.20.0
+	github.com/getsentry/sentry-go v0.21.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redis/redismock/v8 v8.11.5
 	github.com/golangci/golangci-lint v1.52.2
