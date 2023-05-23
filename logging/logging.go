@@ -32,15 +32,17 @@ func NewConfig() zap.Config {
 		config = newProductionConfig()
 	}
 
-	level := os.Getenv("LOG_LEVEL")
-	// Temporarily treat "warning" like "warn" for backwards compatibility with
-	// logrus.
-	if strings.ToLower(level) == "warning" {
-		level = "warn"
-	}
+	level, ok := os.LookupEnv("LOG_LEVEL")
+	if ok {
+		// Temporarily treat "warning" like "warn" for backwards compatibility with
+		// logrus.
+		if strings.ToLower(level) == "warning" {
+			level = "warn"
+		}
 
-	if lvl, err := zap.ParseAtomicLevel(level); err == nil {
-		config.Level = lvl
+		if lvl, err := zap.ParseAtomicLevel(level); err == nil {
+			config.Level = lvl
+		}
 	}
 
 	return config
