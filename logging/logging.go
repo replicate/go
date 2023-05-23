@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strings"
 
@@ -9,7 +10,10 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var baseLogger = zap.Must(NewConfig().Build())
+var (
+	baseConfig = NewConfig()
+	baseLogger = zap.Must(baseConfig.Build())
+)
 
 type contextKey int
 
@@ -109,4 +113,8 @@ func AddFields(ctx context.Context, fields ...zap.Field) context.Context {
 	f := GetFields(ctx)
 	f = append(f, fields...)
 	return context.WithValue(ctx, contextFieldsKey, f)
+}
+
+func LevelHandler(w http.ResponseWriter, r *http.Request) {
+	baseConfig.Level.ServeHTTP(w, r)
 }
