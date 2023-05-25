@@ -64,6 +64,10 @@ func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) boo
 	if currentClient == nil {
 		return defaultVal
 	}
+	if context == nil {
+		log.Warnw("flags package was passed a nil context: returning default value", "flag", name, "default_value", defaultVal)
+		return defaultVal
+	}
 	// BoolVariation and friends only return an error in the event that flags are
 	// not available (e.g. if LaunchDarkly is having an outage or we've
 	// misconfigured the client).

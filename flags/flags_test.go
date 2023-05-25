@@ -13,6 +13,15 @@ func TestFlagDefault(t *testing.T) {
 	require.False(t, Flag(&testcontext, "anyflag"))
 }
 
+func TestFlagDefaultNilContext(t *testing.T) {
+	var testcontext *ldcontext.Context
+
+	// Ensure that the client is configured (albeit in offline mode)
+	Init("")
+
+	require.False(t, Flag(testcontext, "anyflag"))
+}
+
 func TestFlagSystemDefault(t *testing.T) {
 	require.False(t, FlagSystem("anyflag"))
 }
