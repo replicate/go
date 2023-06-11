@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
