@@ -2,6 +2,8 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -70,6 +72,35 @@ Outer:
 	// allow up to 1% error
 	assert.InDelta(t, expectedTotal, permitted+denied, float64(expectedTotal/100))
 	assert.InDelta(t, expectedPermitted, permitted, float64(expectedPermitted/100))
+}
+
+// Regression test for a bug where we weren't setting a TTL on the key the first
+// time the limiter was called.
+func TestLimiterAlwaysSetsExpiry(t *testing.T) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL is not set")
+	}
+
+	key := fmt.Sprintf("limit:testkey:%d", rand.Uint32())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	opts, err := redis.ParseURL(redisURL)
+	require.NoError(t, err)
+
+	client := redis.NewClient(opts)
+	limiter, _ := NewLimiter(client)
+	require.NoError(t, limiter.Prepare(ctx))
+
+	// Clean up at the end of the test
+	defer client.Del(ctx, key)
+
+	_, _ = limiter.Take(ctx, key, 1, 100, 10000)
+
+	ttl := client.TTL(ctx, key).Val()
+	require.Greater(t, ttl, time.Duration(0))
 }
 
 func TestLimiterTakeWithNegativeInputsReturnsError(t *testing.T) {
