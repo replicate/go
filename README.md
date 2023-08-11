@@ -12,13 +12,35 @@ applications.
 
 ## Packages
 
+### `cache`
+
+A redis-backed typed object cache implementation supporting serve-from-stale and
+asynchronous cache fills.
+
+### `errors`
+
+Configures conventions for recording errors: a wrapper around the Sentry SDK.
+
 ### `flags`
 
 Feature flagging functions: a thin wrapper around the LaunchDarkly client.
 
+### `httpclient`
+
+Conventions for creating HTTP clients with appropriate pooling and timeout
+configuration. Heavily inspired by <https://github.com/hashicorp/go-cleanhttp>.
+
+### `lock`
+
+A redis-backed distributed lock for coordination within multi-instance services.
+
 ### `logging`
 
 Configures logging conventions for `github.com/sirupsen/logrus`.
+
+### `ratelimit`
+
+A redis-backed token-bucket rate limiter implementation.
 
 ### `telemetry`
 
