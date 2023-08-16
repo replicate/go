@@ -170,3 +170,16 @@ func TestCacheSet(t *testing.T) {
 
 	assert.NoError(t, err)
 }
+
+func TestCacheSetNilForbidden(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client, _ := redismock.NewClientMock()
+	cache := NewCache[*testObj](client, "objects", fresh, stale)
+
+	err := cache.Set(ctx, "elephant", nil)
+	assert.ErrorIs(t, err, ErrNilValue)
+}
