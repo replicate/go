@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -29,6 +30,8 @@ var (
 
 	// internal error indicating a hard cache miss
 	errCacheMiss = errors.New("value not in cache")
+
+	ErrNilValue = errors.New("nil values are not permitted")
 )
 
 type Fetcher[T any] func(ctx context.Context, key string) (T, error)
@@ -176,6 +179,13 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 }
 
 func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
+	// Even if T is a pointer type, we almost certainly don't want to accept nil
+	// values into the cache.
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Ptr && rv.IsNil() {
+		return ErrNilValue
+	}
+
 	keys := c.keysFor(key)
 
 	data, err := json.Marshal(value)
