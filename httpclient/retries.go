@@ -22,7 +22,7 @@ import (
 func ApplyRetryPolicy(c *http.Client) *http.Client {
 	retryClient := &retryablehttp.Client{
 		HTTPClient:   c,
-		Logger:       nil, // "logging" is provided by OTel transport on the web client
+		Logger:       nil, // "logging" is assumed to be provided by an OTel transport on the underlying client
 		RetryWaitMin: 100 * time.Millisecond,
 		RetryWaitMax: 2 * time.Second,
 		RetryMax:     4,
