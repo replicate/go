@@ -6,6 +6,7 @@ require (
 	github.com/getsentry/sentry-go v0.23.0
 	github.com/go-redis/redismock/v9 v9.0.3
 	github.com/golangci/golangci-lint v1.53.3
+	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/launchdarkly/go-sdk-common/v3 v3.0.1
 	github.com/launchdarkly/go-server-sdk/v6 v6.1.0
 	github.com/redis/go-redis/v9 v9.0.5
@@ -104,6 +105,7 @@ require (
 	github.com/gregjones/httpcache v0.0.0-20171119193500-2bcd89a1743f // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-version v1.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
