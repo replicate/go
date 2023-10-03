@@ -8,7 +8,11 @@ updates:
       otel:
         patterns:
           - "go.opentelemetry.io/*"
+    reviewers:
+    - "replicate/infra"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    reviewers:
+    - "replicate/infra"
