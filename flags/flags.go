@@ -43,26 +43,34 @@ func Close() error {
 }
 
 func Flag(context *ldcontext.Context, name string) bool {
-	return lookupDefaultBool(context, name, false)
+	return lookupDefault(context, name, false, currentClient.BoolVariation)
 }
 
 func FlagSystem(name string) bool {
-	return lookupDefaultBool(&systemUser, name, false)
+	return lookupDefault(&systemUser, name, false, currentClient.BoolVariation)
 }
 
 func KillSwitch(context *ldcontext.Context, name string) bool {
-	return lookupDefaultBool(context, name, true)
+	return lookupDefault(context, name, true, currentClient.BoolVariation)
 }
 
 func KillSwitchSystem(name string) bool {
-	return lookupDefaultBool(&systemUser, name, true)
+	return lookupDefault(&systemUser, name, true, currentClient.BoolVariation)
+}
+
+func Int(context *ldcontext.Context, name string) int {
+	return lookupDefault(context, name, 0, currentClient.IntVariation)
+}
+
+func Float64(context *ldcontext.Context, name string) float64 {
+	return lookupDefault(context, name, 0.0, currentClient.Float64Variation)
 }
 
 func String(context *ldcontext.Context, name string) string {
-	return lookupDefaultString(context, name, "")
+	return lookupDefault(context, name, "", currentClient.StringVariation)
 }
 
-func lookupDefaultBool(context *ldcontext.Context, name string, defaultVal bool) bool {
+func lookupDefault[T any](context *ldcontext.Context, name string, defaultVal T, variationFunc func(string, ldcontext.Context, T) (T, error)) T {
 	log := logger.Sugar()
 
 	if currentClient == nil {
@@ -72,30 +80,10 @@ func lookupDefaultBool(context *ldcontext.Context, name string, defaultVal bool)
 		log.Warnw("flags package was passed a nil context: returning default value", "flag", name, "default_value", defaultVal)
 		return defaultVal
 	}
-	// BoolVariation and friends only return an error in the event that flags are
+	// Variation functions only return an error in the event that flags are
 	// not available (e.g. if LaunchDarkly is having an outage or we've
 	// misconfigured the client).
-	result, err := currentClient.BoolVariation(name, *context, defaultVal)
-	if err != nil {
-		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
-	}
-	return result
-}
-
-func lookupDefaultString(context *ldcontext.Context, name string, defaultVal string) string {
-	log := logger.Sugar()
-
-	if currentClient == nil {
-		return defaultVal
-	}
-	if context == nil {
-		log.Warnw("flags package was passed a nil context: returning default value", "flag", name, "default_value", defaultVal)
-		return defaultVal
-	}
-	// StringVariation and friends only return an error in the event that flags are
-	// not available (e.g. if LaunchDarkly is having an outage or we've
-	// misconfigured the client).
-	result, err := currentClient.StringVariation(name, *context, defaultVal)
+	result, err := variationFunc(name, *context, defaultVal)
 	if err != nil {
 		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
 	}

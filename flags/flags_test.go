@@ -36,6 +36,18 @@ func TestKillSwitchSystemDefault(t *testing.T) {
 	require.True(t, KillSwitchSystem("anyflag"))
 }
 
+func TestIntDefault(t *testing.T) {
+	testcontext := ldcontext.New("__test__")
+
+	require.Equal(t, 0, Int(&testcontext, "anyflag"))
+}
+
+func TestFloat64Default(t *testing.T) {
+	testcontext := ldcontext.New("__test__")
+
+	require.Equal(t, 0.0, Float64(&testcontext, "anyflag"))
+}
+
 func TestStringDefault(t *testing.T) {
 	testcontext := ldcontext.New("__test__")
 
