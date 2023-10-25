@@ -43,22 +43,26 @@ func Close() error {
 }
 
 func Flag(context *ldcontext.Context, name string) bool {
-	return lookupDefault(context, name, false)
+	return lookupDefaultBool(context, name, false)
 }
 
 func FlagSystem(name string) bool {
-	return lookupDefault(&systemUser, name, false)
+	return lookupDefaultBool(&systemUser, name, false)
 }
 
 func KillSwitch(context *ldcontext.Context, name string) bool {
-	return lookupDefault(context, name, true)
+	return lookupDefaultBool(context, name, true)
 }
 
 func KillSwitchSystem(name string) bool {
-	return lookupDefault(&systemUser, name, true)
+	return lookupDefaultBool(&systemUser, name, true)
 }
 
-func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) bool {
+func String(context *ldcontext.Context, name string) string {
+	return lookupDefaultString(context, name, "")
+}
+
+func lookupDefaultBool(context *ldcontext.Context, name string, defaultVal bool) bool {
 	log := logger.Sugar()
 
 	if currentClient == nil {
@@ -72,6 +76,26 @@ func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) boo
 	// not available (e.g. if LaunchDarkly is having an outage or we've
 	// misconfigured the client).
 	result, err := currentClient.BoolVariation(name, *context, defaultVal)
+	if err != nil {
+		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
+	}
+	return result
+}
+
+func lookupDefaultString(context *ldcontext.Context, name string, defaultVal string) string {
+	log := logger.Sugar()
+
+	if currentClient == nil {
+		return defaultVal
+	}
+	if context == nil {
+		log.Warnw("flags package was passed a nil context: returning default value", "flag", name, "default_value", defaultVal)
+		return defaultVal
+	}
+	// StringVariation and friends only return an error in the event that flags are
+	// not available (e.g. if LaunchDarkly is having an outage or we've
+	// misconfigured the client).
+	result, err := currentClient.StringVariation(name, *context, defaultVal)
 	if err != nil {
 		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
 	}
