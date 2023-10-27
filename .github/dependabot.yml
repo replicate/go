@@ -8,8 +8,12 @@ updates:
       otel:
         patterns:
           - "go.opentelemetry.io/*"
+      redis:
+        patterns:
+          - "github.com/redis/*"
+          - "github.com/go-redis/*"
     reviewers:
-    - "replicate/infra"
+      - "replicate/infra"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
