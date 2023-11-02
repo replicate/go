@@ -54,6 +54,13 @@ func Tracer(service string, component string, opts ...trace.TracerOption) trace.
 	return otel.Tracer(name, opts...)
 }
 
+func TraceContextFromContext(ctx context.Context) propagation.MapCarrier {
+	c := propagation.MapCarrier{}
+	propagator := otel.GetTextMapPropagator()
+	propagator.Inject(ctx, c)
+	return c
+}
+
 func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	// The exporter uses the OTEL_EXPORTER_OTLP_ENDPOINT and
 	// OTEL_EXPORTER_OTLP_HEADERS environment variables.
