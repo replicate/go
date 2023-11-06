@@ -8,7 +8,7 @@ require (
 	github.com/golangci/golangci-lint v1.55.1
 	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/launchdarkly/go-sdk-common/v3 v3.1.0
-	github.com/launchdarkly/go-server-sdk/v6 v6.1.0
+	github.com/launchdarkly/go-server-sdk/v6 v6.1.1
 	github.com/redis/go-redis/v9 v9.3.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/speps/go-hashids/v2 v2.0.1
@@ -131,7 +131,7 @@ require (
 	github.com/launchdarkly/ccache v1.1.0 // indirect
 	github.com/launchdarkly/eventsource v1.6.2 // indirect
 	github.com/launchdarkly/go-jsonstream/v3 v3.0.0 // indirect
-	github.com/launchdarkly/go-sdk-events/v2 v2.0.1 // indirect
+	github.com/launchdarkly/go-sdk-events/v2 v2.0.2 // indirect
 	github.com/launchdarkly/go-semver v1.0.2 // indirect
 	github.com/launchdarkly/go-server-sdk-evaluation/v2 v2.0.2 // indirect
 	github.com/ldez/gomoddirectives v0.2.3 // indirect
