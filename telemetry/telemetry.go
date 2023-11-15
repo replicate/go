@@ -86,7 +86,19 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 		return nil, fmt.Errorf("failed to merge resources: %w", err)
 	}
 
-	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(rsrc))
+	// Create a new sampler which overrides the default behaviour of respecting
+	// remote parents' head-sampling decisions. For now, each service is
+	// responsible for making its own head-sampling decisions.
+	sampler := sdktrace.ParentBased(
+		sdktrace.AlwaysSample(),
+		sdktrace.WithRemoteParentNotSampled(sdktrace.AlwaysSample()),
+	)
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(rsrc),
+		sdktrace.WithSampler(sampler),
+		sdktrace.WithBatcher(exp),
+	)
 
 	return tp, nil
 }
