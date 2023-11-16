@@ -37,7 +37,9 @@ jobs:
       with:
         go-version-file: go.mod
         cache: false # for this job we rely on golangci-lint-action's cache
-    - name: Lint
+    - name: Lint (other)
+      run: script/lint
+    - name: Lint (golangci-lint)
       uses: golangci/golangci-lint-action@v3
       with:
         version: v1.52
