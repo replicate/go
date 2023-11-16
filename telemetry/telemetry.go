@@ -86,7 +86,8 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 		return nil, fmt.Errorf("failed to merge resources: %w", err)
 	}
 
-	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(rsrc))
+	sp := &TraceOptionsProcessor{Next: sdktrace.NewBatchSpanProcessor(exp)}
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sp), sdktrace.WithResource(rsrc))
 
 	return tp, nil
 }
