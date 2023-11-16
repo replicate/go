@@ -21,7 +21,7 @@ const ConnectTimeout = 5 * time.Second
 // to http.DefaultTransport, but with idle connections and keepalives disabled.
 // The transport is configured to emit OTel spans.
 func DefaultRoundTripper() http.RoundTripper {
-	transport := defaultPooledTransport()
+	transport := DefaultPooledTransport()
 	transport.DisableKeepAlives = true
 	transport.MaxIdleConnsPerHost = -1
 	return otelhttp.NewTransport(transport)
@@ -32,14 +32,14 @@ func DefaultRoundTripper() http.RoundTripper {
 // it can leak file descriptors over time. Only use this for transports that
 // will be re-used for the same host(s).
 func DefaultPooledRoundTripper() http.RoundTripper {
-	return otelhttp.NewTransport(defaultPooledTransport())
+	return otelhttp.NewTransport(DefaultPooledTransport())
 }
 
 // PooledEgressRoundTripper returns an http.RoundTripper designed to call
 // arbitrary 3rd-party endpoints. It accepts a proxy function which in
 // production should point to a suitable egress proxy.
 func PooledEgressRoundTripper(proxy func(*http.Request) (*url.URL, error)) http.RoundTripper {
-	transport := defaultPooledTransport()
+	transport := DefaultPooledTransport()
 	transport.Proxy = proxy
 
 	// Set a no-op propagator that won't forward any trace info.
@@ -48,7 +48,16 @@ func PooledEgressRoundTripper(proxy func(*http.Request) (*url.URL, error)) http.
 	return otelhttp.NewTransport(transport, otelhttp.WithPropagators(noopPropagator))
 }
 
-func defaultPooledTransport() *http.Transport {
+// DefaultPooledTransport returns a new http.Transport with similar default
+// values to http.DefaultTransport. Do not use this for transient transports as
+// it can leak file descriptors over time. Only use this for transports that
+// will be re-used for the same host(s).
+//
+// You should usually use DefaultPooledRoundTripper instead. If you do use this
+// (perhaps in order to tweak some of the configuration values) be aware that
+// you will need to handle wrapping it in an OTel transport with
+// `otelhttp.NewTransport` yourself.
+func DefaultPooledTransport() *http.Transport {
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
