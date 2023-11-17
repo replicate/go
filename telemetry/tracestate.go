@@ -7,6 +7,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type traceOptionsContextKeyT string
+
+const traceOptionsContextKey = traceOptionsContextKeyT("traceOptions")
+
 const (
 	TraceStateKeyDetailLevel = "r8/dl"
 	TraceStateKeySampleMode  = "r8/sm"
@@ -57,16 +61,20 @@ type TraceOptions struct {
 // TraceOptionsFromContext extracts any custom trace options from the trace
 // state carried in the passed context.
 func TraceOptionsFromContext(ctx context.Context) TraceOptions {
-	ts := trace.SpanContextFromContext(ctx).TraceState()
-	return parseTraceOptions(ts)
+	// First we see if any TraceOptions are set directly in the context. If so,
+	// they override any in the SpanContext TraceState.
+	if to, ok := traceOptionsFromContextOnly(ctx); ok {
+		return to
+	}
+
+	// Otherwise we fall back to using any TraceOptions set in the SpanContext.
+	return parseTraceOptions(trace.SpanContextFromContext(ctx).TraceState())
 }
 
 // WithTraceOptions returns a copy of the provided context with the passed
 // TraceOptions set.
 func WithTraceOptions(ctx context.Context, to TraceOptions) context.Context {
-	sc := trace.SpanContextFromContext(ctx)
-	ts := setTraceOptions(sc.TraceState(), to)
-	return trace.ContextWithSpanContext(ctx, sc.WithTraceState(ts))
+	return context.WithValue(ctx, traceOptionsContextKey, to)
 }
 
 // WithFullTrace returns a new context with full tracing mode enabled. This
@@ -76,6 +84,15 @@ func WithFullTrace(ctx context.Context) context.Context {
 	to.DetailLevel = DetailLevelFull
 	to.SampleMode = SampleModeAlways
 	return WithTraceOptions(ctx, to)
+}
+
+func traceOptionsFromContextOnly(ctx context.Context) (TraceOptions, bool) {
+	if v := ctx.Value(traceOptionsContextKey); v != nil {
+		if to, ok := v.(TraceOptions); ok {
+			return to, true
+		}
+	}
+	return TraceOptions{}, false
 }
 
 func parseTraceOptions(ts trace.TraceState) TraceOptions {

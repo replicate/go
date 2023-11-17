@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,17 +31,19 @@ func TestWithTraceOptionsSetsTraceOptions(t *testing.T) {
 	assert.Equal(t, SampleModeAlways, to.SampleMode)
 }
 
-func TestWithTraceOptionsSerialization(t *testing.T) {
+func TestTraceOptionsUsesSpanContextTraceOptions(t *testing.T) {
 	ctx := context.Background()
 
-	ctx = WithTraceOptions(ctx, TraceOptions{
-		DetailLevel: DetailLevelFull,
-		SampleMode:  SampleModeAlways,
-	})
+	ts := trace.TraceState{}
+	ts, _ = ts.Insert("r8/dl", "full")
+	ts, _ = ts.Insert("r8/sm", "always")
 
-	tsString := trace.SpanContextFromContext(ctx).TraceState().String()
-	elements := strings.Split(tsString, ",")
+	scc := makeValidSpanContextConfig()
+	scc.TraceState = ts
+	sc := trace.NewSpanContext(scc)
+	ctx = trace.ContextWithSpanContext(ctx, sc)
 
-	assert.Contains(t, elements, "r8/sm=always")
-	assert.Contains(t, elements, "r8/dl=full")
+	to := TraceOptionsFromContext(ctx)
+	assert.Equal(t, DetailLevelFull, to.DetailLevel)
+	assert.Equal(t, SampleModeAlways, to.SampleMode)
 }
