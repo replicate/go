@@ -37,10 +37,12 @@ func Start(ctx context.Context) (*Telemetry, error) {
 	otel.SetErrorHandler(ErrorHandler{})
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{},
-			propagation.Baggage{},
-		),
+		&TraceOptionsPropagator{
+			Next: propagation.NewCompositeTextMapPropagator(
+				propagation.TraceContext{},
+				propagation.Baggage{},
+			),
+		},
 	)
 
 	return &Telemetry{tp}, nil
