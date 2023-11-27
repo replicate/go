@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/propagation"
+	"golang.org/x/net/http2"
 )
 
 const ConnectTimeout = 5 * time.Second
@@ -72,6 +73,7 @@ func DefaultPooledTransport() *http.Transport {
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxIdleConnsPerHost:   runtime.GOMAXPROCS(0) + 1,
 	}
+	configureHTTP2(transport)
 	return transport
 }
 
@@ -92,4 +94,30 @@ func DefaultPooledClient() *http.Client {
 	return &http.Client{
 		Transport: DefaultPooledRoundTripper(),
 	}
+}
+
+func configureHTTP2(t *http.Transport) {
+	h2t, err := http2.ConfigureTransports(t)
+	if err != nil {
+		// ConfigureTransports should only ever return an error if the transport
+		// passed in has already been configured for http2, which shouldn't be
+		// possible for us.
+		panic(err)
+	}
+
+	// Send a ping frame on any connection that's been idle for more than 10
+	// seconds.
+	//
+	// The default is to never do this. We set it primarily as a workaround for
+	//
+	//   https://github.com/golang/go/issues/59690
+	//
+	// where a connection that goes AWOL will not be correctly terminated and
+	// removed from the connection pool under certain circumstances. Together
+	// `ReadIdleTimeout` and `PingTimeout` should ensure that we remove defunct
+	// connections in ~20 seconds.
+	h2t.ReadIdleTimeout = 10 * time.Second
+	// Give the other end 10 seconds to respond. If we don't hear back, we'll
+	// close the connection.
+	h2t.PingTimeout = 10 * time.Second
 }
