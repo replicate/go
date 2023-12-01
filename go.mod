@@ -6,7 +6,7 @@ require (
 	github.com/getsentry/sentry-go v0.25.0
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golangci/golangci-lint v1.55.1
-	github.com/hashicorp/go-retryablehttp v0.7.4
+	github.com/hashicorp/go-retryablehttp v0.7.5
 	github.com/launchdarkly/go-sdk-common/v3 v3.1.0
 	github.com/launchdarkly/go-server-sdk/v6 v6.1.1
 	github.com/redis/go-redis/v9 v9.3.0
