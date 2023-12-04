@@ -58,6 +58,15 @@ func KillSwitchSystem(name string) bool {
 	return lookupDefault(&systemUser, name, true)
 }
 
+func BlueGreen(context *ldcontext.Context, name string, blueValue any, greenValue any, defaultColor string) any {
+	defaultValue := defaultColor == "blue"
+	if lookupDefault(context, name, defaultValue) {
+		return blueValue
+	} else {
+		return greenValue
+	}
+}
+
 func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) bool {
 	log := logger.Sugar()
 
