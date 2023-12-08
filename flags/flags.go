@@ -12,6 +12,13 @@ import (
 var currentClient *ld.LDClient
 var logger = logging.New("flags")
 
+type BlueGreenResult string
+
+const (
+	ResultBlue  BlueGreenResult = "blue"
+	ResultGreen BlueGreenResult = "green"
+)
+
 func Init(key string) {
 	log := logger.Sugar()
 
@@ -44,6 +51,23 @@ func Close() error {
 
 func Flag(context *ldcontext.Context, name string) bool {
 	return lookupDefault(context, name, false)
+}
+
+// FlagBlueGreen is a wrapper around a boolean flag that serves to
+// conventionalise a blue/green rollout pattern.
+//
+// You would use it in code that needs to roll out a behavior in both directions
+// -- from green to blue and from blue to green -- but with a safe fallback
+// value (the provided default) once a rollout is complete. This guards against
+// the possibility of a LaunchDarkly outage reverting a blue-green rollout.
+//
+// It is highly recommended that you label the LaunchDarkly variations clearly.
+// The true variation should be "Blue", and the false variation "Green".
+func FlagBlueGreen(context *ldcontext.Context, name string, defaultVal BlueGreenResult) BlueGreenResult {
+	if lookupDefault(context, name, defaultVal == ResultBlue) {
+		return ResultBlue
+	}
+	return ResultGreen
 }
 
 func FlagSystem(name string) bool {
