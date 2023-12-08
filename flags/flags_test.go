@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +21,13 @@ func TestFlagDefaultNilContext(t *testing.T) {
 	Init("")
 
 	require.False(t, Flag(testcontext, "anyflag"))
+}
+
+func TestFlagBlueGreenDefault(t *testing.T) {
+	testcontext := ldcontext.New("__test__")
+
+	assert.Equal(t, FlagBlueGreen(&testcontext, "anyflag", ResultBlue), ResultBlue)
+	assert.Equal(t, FlagBlueGreen(&testcontext, "anyflag", ResultGreen), ResultGreen)
 }
 
 func TestFlagSystemDefault(t *testing.T) {
