@@ -23,11 +23,11 @@ func TestFlagDefaultNilContext(t *testing.T) {
 	require.False(t, Flag(testcontext, "anyflag"))
 }
 
-func TestFlagBlueGreenDefault(t *testing.T) {
+func TestFlagBlueYellowDefault(t *testing.T) {
 	testcontext := ldcontext.New("__test__")
 
-	assert.Equal(t, FlagBlueGreen(&testcontext, "anyflag", ResultBlue), ResultBlue)
-	assert.Equal(t, FlagBlueGreen(&testcontext, "anyflag", ResultGreen), ResultGreen)
+	assert.Equal(t, FlagBlueYellow(&testcontext, "anyflag", ResultBlue), ResultBlue)
+	assert.Equal(t, FlagBlueYellow(&testcontext, "anyflag", ResultYellow), ResultYellow)
 }
 
 func TestFlagSystemDefault(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 var currentClient *ld.LDClient
 var logger = logging.New("flags")
 
-type BlueGreenResult string
+type BlueYellowResult string
 
 const (
-	ResultBlue  BlueGreenResult = "blue"
-	ResultGreen BlueGreenResult = "green"
+	ResultBlue   BlueYellowResult = "blue"
+	ResultYellow BlueYellowResult = "yellow"
 )
 
 func Init(key string) {
@@ -53,21 +53,45 @@ func Flag(context *ldcontext.Context, name string) bool {
 	return lookupDefault(context, name, false)
 }
 
-// FlagBlueGreen is a wrapper around a boolean flag that serves to
-// conventionalise a blue/green rollout pattern.
+// FlagBlueYellow is a wrapper around a boolean flag that serves to
+// conventionalise a blue/green (or in this case blue/yellow) rollout pattern.
 //
 // You would use it in code that needs to roll out a behavior in both directions
-// -- from green to blue and from blue to green -- but with a safe fallback
+// -- from yellow to blue and from blue to yellow -- but with a safe fallback
 // value (the provided default) once a rollout is complete. This guards against
-// the possibility of a LaunchDarkly outage reverting a blue-green rollout.
+// the possibility of a LaunchDarkly outage accidentally reverting a rollout.
 //
-// It is highly recommended that you label the LaunchDarkly variations clearly.
-// The true variation should be "Blue", and the false variation "Green".
-func FlagBlueGreen(context *ldcontext.Context, name string, defaultVal BlueGreenResult) BlueGreenResult {
+// While the naming is idiosyncratic, it serves to emphasise that this is not a
+// "normal" blue-green flag, and care is required when setting up the flag in
+// LaunchDarkly.
+//
+// You should label the LaunchDarkly variations clearly. The true variation
+// should be "Blue", and the false variation "Yellow". The names should match
+// the default colors assigned to boolean flag variations in LaunchDarkly.
+//
+// Code that uses this should look something like the following:
+//
+//	rolloutDefault := flags.ResultBlue
+//	if flags.FlagBlueYellow(&flagContext, "my-rollout-flag", rolloutDefault) == flags.ResultBlue {
+//	  // behavior when blue...
+//	} else {
+//	  // behavior when yellow...
+//	}
+//
+// Depending on the situation, you would change the default in code (here,
+// `rolloutDefault`) either when starting a new rollout, or when one has
+// completed. Note: the default value will *only* be used if either
+//
+// - LaunchDarkly cannot be contacted
+// - the flag is not defined in LaunchDarkly
+//
+// A LaunchDarkly flag used for blue-yellow rollouts should be clearly
+// annotated, and usually left with targeting switched on at all times.
+func FlagBlueYellow(context *ldcontext.Context, name string, defaultVal BlueYellowResult) BlueYellowResult {
 	if lookupDefault(context, name, defaultVal == ResultBlue) {
 		return ResultBlue
 	}
-	return ResultGreen
+	return ResultYellow
 }
 
 func FlagSystem(name string) bool {
