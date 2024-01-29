@@ -51,6 +51,56 @@ var (
 // etc.
 type Duration time.Duration
 
+// Duration returns the duration as a time.Duration.
+func (d Duration) Duration() time.Duration {
+	return time.Duration(d)
+}
+
+// Abs returns the absolute value of d. As a special case, math.MinInt64 is
+// converted to math.MaxInt64.
+func (d Duration) Abs() Duration {
+	return Duration(d.Duration().Abs())
+}
+
+// Hours returns the duration as a floating point number of hours.
+func (d Duration) Hours() float64 {
+	return d.Duration().Hours()
+}
+
+// Microseconds returns the duration as an integer microsecond count.
+func (d Duration) Microseconds() int64 {
+	return d.Duration().Microseconds()
+}
+
+// Milliseconds returns the duration as an integer millisecond count.
+func (d Duration) Milliseconds() int64 {
+	return d.Duration().Milliseconds()
+}
+
+// Minutes returns the duration as a floating point number of minutes.
+func (d Duration) Minutes() float64 {
+	return d.Duration().Minutes()
+}
+
+// Nanoseconds returns the duration as an integer nanosecond count.
+func (d Duration) Nanoseconds() int64 {
+	return d.Duration().Nanoseconds()
+}
+
+// Round returns the result of rounding d to the nearest multiple of m. The
+// rounding behavior for halfway values is to round away from zero. If the
+// result exceeds the maximum (or minimum) value that can be stored in a
+// Duration, Round returns the maximum (or minimum) duration. If m <= 0, Round
+// returns d unchanged.
+func (d Duration) Round(m Duration) Duration {
+	return Duration(d.Duration().Round(m.Duration()))
+}
+
+// Seconds returns the duration as a floating point number of seconds.
+func (d Duration) Seconds() float64 {
+	return d.Duration().Seconds()
+}
+
 func (d Duration) String() string {
 	if int(d) == 0 {
 		return "PT0S"
@@ -106,6 +156,12 @@ func (d Duration) String() string {
 		_, _ = sb.WriteRune('S')
 	}
 	return sb.String()
+}
+
+// Truncate returns the result of rounding d toward zero to a multiple of m. If
+// m <= 0, Truncate returns d unchanged.
+func (d Duration) Truncate(m Duration) Duration {
+	return Duration(d.Duration().Truncate(m.Duration()))
 }
 
 func (d Duration) MarshalJSON() ([]byte, error) {
