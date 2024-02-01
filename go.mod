@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.21.5
 
 require (
-	github.com/getsentry/sentry-go v0.25.0
+	github.com/getsentry/sentry-go v0.26.0
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golangci/golangci-lint v1.55.2
 	github.com/hashicorp/go-retryablehttp v0.7.5
