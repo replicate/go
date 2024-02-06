@@ -8,12 +8,11 @@ import (
 	"github.com/speps/go-hashids/v2"
 )
 
+const VersionKind = ldcontext.Kind("version")
+
 type goContextKey string
 
-const (
-	versionKind     = "version"
-	savedContextKey = goContextKey("savedContext")
-)
+const savedContextKey = goContextKey("savedContext")
 
 var userHashID *hashids.HashID
 var systemUser = ldcontext.New("__system__")
@@ -71,5 +70,5 @@ func GetUser(id int, r *http.Request) ldcontext.Context {
 func GetVersion(id string) ldcontext.Context {
 	// We rely on web to have populated other fields (hardware, model.owner,
 	// etc.) in LaunchDarkly.
-	return ldcontext.NewWithKind(versionKind, id)
+	return ldcontext.NewWithKind(VersionKind, id)
 }
