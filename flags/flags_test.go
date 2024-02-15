@@ -43,3 +43,20 @@ func TestKillSwitchDefault(t *testing.T) {
 func TestKillSwitchSystemDefault(t *testing.T) {
 	require.True(t, KillSwitchSystem("anyflag"))
 }
+
+func TestOverrides(t *testing.T) {
+	testcontext := ldcontext.New("__test__")
+
+	Override(func(o map[string]bool) {
+		o["myflag"] = true
+		o["otherflag"] = false
+	})
+
+	require.True(t, Flag(&testcontext, "myflag"))
+	require.False(t, KillSwitch(&testcontext, "otherflag"))
+
+	ClearOverrides()
+
+	require.False(t, Flag(&testcontext, "myflag"))
+	require.True(t, KillSwitch(&testcontext, "otherflag"))
+}

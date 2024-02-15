@@ -12,6 +12,8 @@ import (
 var currentClient *ld.LDClient
 var logger = logging.New("flags")
 
+var overrides = make(map[string]bool)
+
 type BlueYellowResult string
 
 const (
@@ -51,6 +53,16 @@ func Close() error {
 
 func Flag(context *ldcontext.Context, name string) bool {
 	return lookupDefault(context, name, false)
+}
+
+// Override allows setting flag overrides. This is usually only used in the
+// context of testing.
+func Override(f func(map[string]bool)) {
+	f(overrides)
+}
+
+func ClearOverrides() {
+	overrides = make(map[string]bool)
 }
 
 // FlagBlueYellow is a wrapper around a boolean flag that serves to
@@ -109,6 +121,9 @@ func KillSwitchSystem(name string) bool {
 func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) bool {
 	log := logger.Sugar()
 
+	if result, ok := overrides[name]; ok {
+		return result
+	}
 	if currentClient == nil {
 		return defaultVal
 	}
