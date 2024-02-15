@@ -16,7 +16,7 @@ const maxTime = uint64(0xFFFF_FFFF_FFFF) // maximum 48-bit value
 // reference used was the latest version of the draft IETF RFC4122bis
 // specification at
 //
-//	https://www.ietf.org/archive/id/draft-ietf-uuidrev-rfc4122bis-13.html
+//	https://www.ietf.org/archive/id/draft-ietf-uuidrev-rfc4122bis-14.html
 //
 // The UUIDv7 bit layout is
 //
