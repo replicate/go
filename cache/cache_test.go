@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -24,22 +25,25 @@ func fetchTestObj(_ context.Context, key string) (testObj, error) {
 type mockWrapper struct {
 	redismock.ClientMock
 
-	name  string
-	fresh time.Duration
-	stale time.Duration
+	name     string
+	fresh    time.Duration
+	stale    time.Duration
+	negative time.Duration
 }
 
 func (m mockWrapper) ExpectCacheFetchEmpty(key string) {
 	m.ExpectMGet(
 		"cache:fresh:"+m.name+":"+key,
 		"cache:data:"+m.name+":"+key,
-	).SetVal([]any{nil, nil})
+		"cache:negative:"+m.name+":"+key,
+	).SetVal([]any{nil, nil, nil})
 }
 
 func (m mockWrapper) ExpectCacheFetchErr(key string, err error) {
 	m.ExpectMGet(
 		"cache:fresh:"+m.name+":"+key,
 		"cache:data:"+m.name+":"+key,
+		"cache:negative:"+m.name+":"+key,
 	).SetErr(err)
 }
 
@@ -51,7 +55,16 @@ func (m mockWrapper) ExpectCacheFetchFresh(key string, value any) {
 	m.ExpectMGet(
 		"cache:fresh:"+m.name+":"+key,
 		"cache:data:"+m.name+":"+key,
-	).SetVal([]any{1, string(data)})
+		"cache:negative:"+m.name+":"+key,
+	).SetVal([]any{1, string(data), nil})
+}
+
+func (m mockWrapper) ExpectCacheFetchNegative(key string) {
+	m.ExpectMGet(
+		"cache:fresh:"+m.name+":"+key,
+		"cache:data:"+m.name+":"+key,
+		"cache:negative:"+m.name+":"+key,
+	).SetVal([]any{nil, nil, 1})
 }
 
 func (m mockWrapper) ExpectCacheFill(key string, value any) {
@@ -61,6 +74,10 @@ func (m mockWrapper) ExpectCacheFill(key string, value any) {
 	}
 	m.ExpectSet("cache:data:"+m.name+":"+key, string(data), m.stale).SetVal("OK")
 	m.ExpectSet("cache:fresh:"+m.name+":"+key, 1, m.fresh).SetVal("OK")
+}
+
+func (m mockWrapper) ExpectCacheFillNegative(key string) {
+	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
 }
 
 func TestCacheFetchesWhenNotInCache(t *testing.T) {
@@ -117,6 +134,65 @@ func TestCacheReturnsValueFromCache(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, v)
 	assert.Equal(t, "value_for:elephant_from_cache", v.Value)
+	assert.NoError(t, cacheMock.ExpectationsWereMet())
+}
+
+// If non-existence is cached, we should get ErrDoesNotExist immediately from
+// the cache.
+func TestCacheReturnsDoesNotExistForNegativeCache(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+	negative := 5 * time.Second
+
+	client, mock := redismock.NewClientMock()
+	cacheMock := mockWrapper{
+		ClientMock: mock,
+
+		name:     "objects",
+		fresh:    fresh,
+		stale:    stale,
+		negative: negative,
+	}
+	cache := NewCache[testObj](client, "objects", fresh, stale, WithNegativeCaching(negative))
+
+	cacheMock.ExpectCacheFetchNegative("elephant")
+
+	_, err := cache.Get(ctx, "elephant", fetchTestObj)
+
+	assert.ErrorIs(t, err, ErrDoesNotExist)
+	assert.NoError(t, cacheMock.ExpectationsWereMet())
+}
+
+// If the fetcher returns ErrDoesNotExist and negative caching is configured, we
+// store non-existence in the cache and return ErrDoesNotExist.
+func TestCacheReturnsDoesNotExistForNegativeCacheWithFetch(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+	negative := 5 * time.Second
+
+	client, mock := redismock.NewClientMock()
+	cacheMock := mockWrapper{
+		ClientMock: mock,
+
+		name:     "objects",
+		fresh:    fresh,
+		stale:    stale,
+		negative: negative,
+	}
+	cache := NewCache[testObj](client, "objects", fresh, stale, WithNegativeCaching(negative))
+
+	cacheMock.ExpectCacheFetchEmpty("elephant")
+	cacheMock.ExpectCacheFillNegative("elephant")
+
+	_, err := cache.Get(ctx, "elephant", func(_ context.Context, _ string) (t testObj, err error) {
+		return t, fmt.Errorf("not found: %w", ErrDoesNotExist)
+	})
+
+	assert.ErrorIs(t, err, ErrDoesNotExist)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
 }
 
