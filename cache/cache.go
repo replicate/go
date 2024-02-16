@@ -31,16 +31,21 @@ var (
 	// internal error indicating a hard cache miss
 	errCacheMiss = errors.New("value not in cache")
 
+	// ErrDoesNotExist is returned if negative caching is enabled and the
+	// non-existence of the specified key has been cached. It must also be
+	// returned by cache fetchers when the specified key does not exist and
+	// negative caching is wanted.
+	ErrDoesNotExist = errors.New("requested item does not exist")
+
+	// ErrNilValue is thrown if a client attempts to set a nil value in the cache.
 	ErrNilValue = errors.New("nil values are not permitted")
 )
 
 type Fetcher[T any] func(ctx context.Context, key string) (T, error)
 
 type Cache[T any] struct {
-	name  string
-	fresh time.Duration
-	stale time.Duration
-
+	name   string
+	opts   cacheOptions
 	client redis.Cmdable
 	locker lock.Locker
 }
@@ -48,17 +53,23 @@ type Cache[T any] struct {
 func NewCache[T any](
 	client redis.Cmdable,
 	name string,
-	fresh time.Duration,
-	stale time.Duration,
+	fresh, stale time.Duration,
+	options ...Option,
 ) *Cache[T] {
-	return &Cache[T]{
-		name:  name,
-		fresh: fresh,
-		stale: stale,
-
+	c := Cache[T]{
+		name:   name,
 		client: client,
 		locker: lock.Locker{Client: client},
 	}
+
+	c.opts.Fresh = fresh
+	c.opts.Stale = stale
+
+	for _, o := range options {
+		o.apply(&c.opts)
+	}
+
+	return &c
 }
 
 func (c *Cache[T]) Prepare(ctx context.Context) error {
@@ -82,22 +93,24 @@ func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (val
 	}
 
 	value, err = c.fetch(ctx, key, fetcher)
-	if err != nil {
-		// If fetching from cache threw any error other than a cache miss, we
-		// immediately fall back to fetching data from upstream.
+	switch {
+	case err == nil:
+		return value, err
+	case errors.Is(err, ErrDoesNotExist):
+		// If we have cached nonexistence, we return that immediately and do no
+		// other work.
+		return value, err
+	case errors.Is(err, errCacheMiss):
+		// If it's a cache miss, we attempt to fill the cache.
+		return c.fill(ctx, key, fetcher)
+	default:
+		// For any other error, we fall back to fetching data from upstream.
 		//
 		// This is the only way we can avoid further amplifying load on the source
 		// of the data (hidden behind the fetcher) when the cache isn't behaving.
-		if err != errCacheMiss {
-			log.Warnw("cache fetch failed: falling back to direct fetch", "error", err)
-			return fetcher(ctx, key)
-		}
-
-		// Otherwise, it's a cache miss.
-		value, err = c.fill(ctx, key, fetcher)
+		log.Warnw("cache fetch failed: falling back to direct fetch", "error", err)
+		return fetcher(ctx, key)
 	}
-
-	return value, err
 }
 
 // Set updates the value stored in a given key with a provided object. This is
@@ -113,16 +126,22 @@ func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
 func (c *Cache[T]) fetch(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
 	keys := c.keysFor(key)
 
-	result, err := c.client.MGet(ctx, keys.fresh, keys.data).Result()
+	result, err := c.client.MGet(ctx, keys.fresh, keys.data, keys.negative).Result()
 	if err != nil {
 		return value, err
 	}
-	if len(result) != 2 {
-		return value, fmt.Errorf("incorrect number of values from redis: got %d, expected 2", len(result))
+	if len(result) != 3 {
+		return value, fmt.Errorf("incorrect number of values from redis: got %d, expected 3", len(result))
 	}
 
 	fresh := result[0]
 	data := result[1]
+	negative := result[2]
+
+	if negative != nil {
+		// cached non-existence
+		return value, ErrDoesNotExist
+	}
 
 	if data == nil {
 		// hard cache miss
@@ -161,7 +180,12 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 	defer span.End()
 
 	value, err = fetcher(ctx, key)
-	if err != nil {
+	if errors.Is(err, ErrDoesNotExist) {
+		if err := c.setNegative(ctx, key); err != nil {
+			return value, err
+		}
+		return value, err
+	} else if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return value, err
 	}
@@ -194,18 +218,30 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	}
 
 	// Update cached value
-	_, err = c.client.Set(ctx, keys.data, string(data), c.stale).Result()
+	err = c.client.Set(ctx, keys.data, string(data), c.opts.Stale).Err()
 	if err != nil {
 		return err
 	}
 
 	// Set freshness sentinel
-	_, err = c.client.Set(ctx, keys.fresh, 1, c.fresh).Result()
+	err = c.client.Set(ctx, keys.fresh, 1, c.opts.Fresh).Err()
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
+	// If negative caching is not enabled, this is a no-op.
+	if c.opts.Negative == 0 {
+		return nil
+	}
+
+	keys := c.keysFor(key)
+
+	// Record non-existence sentinel in the cache
+	return c.client.Set(ctx, keys.negative, 1, c.opts.Negative).Err()
 }
 
 // refresh attempts to refill the cache in the event of a soft cache miss. We
@@ -218,7 +254,7 @@ func (c *Cache[T]) refresh(ctx context.Context, key string, fetcher Fetcher[T]) 
 
 	// We acquire the lock for (at most) the duration for which we're prepared to
 	// serve stale values.
-	l, err := c.locker.TryAcquire(ctx, keys.lock, c.stale)
+	l, err := c.locker.TryAcquire(ctx, keys.lock, c.opts.Stale)
 	if err == lock.ErrLockNotAcquired {
 		return
 	} else if err != nil {
@@ -267,16 +303,18 @@ func (c *Cache[T]) refreshInner(ctx context.Context, key string, fetcher Fetcher
 }
 
 type keys struct {
-	data  string
-	fresh string
-	lock  string
+	data     string
+	fresh    string
+	lock     string
+	negative string
 }
 
 func (c *Cache[T]) keysFor(key string) keys {
 	return keys{
-		data:  fmt.Sprintf("cache:data:%s:%s", c.name, key),
-		fresh: fmt.Sprintf("cache:fresh:%s:%s", c.name, key),
-		lock:  fmt.Sprintf("cache:lock:%s:%s", c.name, key),
+		data:     fmt.Sprintf("cache:data:%s:%s", c.name, key),
+		fresh:    fmt.Sprintf("cache:fresh:%s:%s", c.name, key),
+		lock:     fmt.Sprintf("cache:lock:%s:%s", c.name, key),
+		negative: fmt.Sprintf("cache:negative:%s:%s", c.name, key),
 	}
 }
 
