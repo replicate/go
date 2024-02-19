@@ -37,8 +37,10 @@ var (
 	// negative caching is wanted.
 	ErrDoesNotExist = errors.New("requested item does not exist")
 
-	// ErrNilValue is thrown if a client attempts to set a nil value in the cache.
-	ErrNilValue = errors.New("nil values are not permitted")
+	// ErrDisallowedCacheValue is thrown if a client attempts to set an entry in
+	// the cache to the zero value of the cache type T. This is disallowed to
+	// prevent accidentally poisoning the cache with invalid data.
+	ErrDisallowedCacheValue = errors.New("nil and zero values are not permitted")
 )
 
 type Fetcher[T any] func(ctx context.Context, key string) (T, error)
@@ -203,11 +205,10 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 }
 
 func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
-	// Even if T is a pointer type, we almost certainly don't want to accept nil
-	// values into the cache.
-	rv := reflect.ValueOf(value)
-	if rv.Kind() == reflect.Ptr && rv.IsNil() {
-		return ErrNilValue
+	// We don't accept the zero value of T into the cache. This could easily be a
+	// bug and we don't want to take the risk of poisoning the cache.
+	if reflect.ValueOf(value).IsZero() {
+		return ErrDisallowedCacheValue
 	}
 
 	keys := c.keysFor(key)

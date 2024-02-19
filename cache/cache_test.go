@@ -258,5 +258,20 @@ func TestCacheSetNilForbidden(t *testing.T) {
 	cache := NewCache[*testObj](client, "objects", fresh, stale)
 
 	err := cache.Set(ctx, "elephant", nil)
-	assert.ErrorIs(t, err, ErrNilValue)
+	assert.ErrorIs(t, err, ErrDisallowedCacheValue)
+}
+
+func TestCacheSetZeroValueForbidden(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client, _ := redismock.NewClientMock()
+	cache := NewCache[testObj](client, "objects", fresh, stale)
+
+	var value testObj
+
+	err := cache.Set(ctx, "elephant", value)
+	assert.ErrorIs(t, err, ErrDisallowedCacheValue)
 }
