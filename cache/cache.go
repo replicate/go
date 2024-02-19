@@ -217,6 +217,12 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		return err
 	}
 
+	// Remove any explicit nonexistence sentinel
+	err = c.client.Del(ctx, keys.negative).Err()
+	if err != nil {
+		return err
+	}
+
 	// Update cached value
 	err = c.client.Set(ctx, keys.data, string(data), c.opts.Stale).Err()
 	if err != nil {

@@ -72,6 +72,7 @@ func (m mockWrapper) ExpectCacheFill(key string, value any) {
 	if err != nil {
 		panic(err)
 	}
+	m.ExpectDel("cache:negative:" + m.name + ":" + key).SetVal(0)
 	m.ExpectSet("cache:data:"+m.name+":"+key, string(data), m.stale).SetVal("OK")
 	m.ExpectSet("cache:fresh:"+m.name+":"+key, 1, m.fresh).SetVal("OK")
 }
