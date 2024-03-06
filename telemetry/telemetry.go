@@ -56,11 +56,21 @@ func Tracer(service string, component string, opts ...trace.TracerOption) trace.
 	return otel.Tracer(name, opts...)
 }
 
+// TraceContextFromContext returns the tracecontext present in the passed
+// context, if any.
 func TraceContextFromContext(ctx context.Context) propagation.MapCarrier {
 	c := propagation.MapCarrier{}
 	propagator := otel.GetTextMapPropagator()
 	propagator.Inject(ctx, c)
 	return c
+}
+
+// WithTraceContext adds the tracecontext from the provided carrier to a
+// returned Context. If no valid tracecontext is contained in the carrier, the
+// passed ctx will be returned directly.
+func WithTraceContext(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
+	propagator := otel.GetTextMapPropagator()
+	return propagator.Extract(ctx, carrier)
 }
 
 func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
