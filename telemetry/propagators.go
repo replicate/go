@@ -3,12 +3,21 @@ package telemetry
 import (
 	"context"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Check TraceOptionsPropagator implements TextMapPropagator
-var _ propagation.TextMapPropagator = new(TraceOptionsPropagator)
+func init() {
+	otel.SetTextMapPropagator(
+		&TraceOptionsPropagator{
+			Next: propagation.NewCompositeTextMapPropagator(
+				propagation.TraceContext{},
+				propagation.Baggage{},
+			),
+		},
+	)
+}
 
 type TraceOptionsPropagator struct {
 	Next propagation.TextMapPropagator

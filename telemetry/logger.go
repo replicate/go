@@ -2,9 +2,15 @@ package telemetry
 
 import (
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func init() {
+	log := logr.New(&zapAdapter{logger: logger})
+	otel.SetLogger(log)
+}
 
 type zapAdapter struct {
 	logger *zap.Logger

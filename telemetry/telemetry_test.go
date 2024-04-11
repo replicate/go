@@ -6,26 +6,30 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// TestStart is the most basic of smoke tests to ensure that we can at least
+// TestInit is the most basic of smoke tests to ensure that we can at least
 // instantiate and start the telemetry package.
-func TestStart(t *testing.T) {
+func TestInit(t *testing.T) {
+	// This is usually called by package init, but here we call it explicitly so
+	// the lack of an OTEL_EXPORTER_OTLP_ENDPOINT doesn't cause us to skip it.
+	configureTracerProvider()
+
+	tp := otel.GetTracerProvider()
+	assert.IsType(t, &sdktrace.TracerProvider{}, tp)
+
 	ctx := context.Background()
-
-	tel, err := Start(ctx)
-
-	require.NoError(t, err)
-
-	require.NoError(t, tel.Shutdown(ctx))
+	require.NoError(t, Shutdown(ctx))
 }
 
 func TestTraceContextFromContext(t *testing.T) {
+	// This is usually called by package init, but here we call it explicitly so
+	// the lack of an OTEL_EXPORTER_OTLP_ENDPOINT doesn't cause us to skip it.
+	configureTracerProvider()
+
 	ctx := context.Background()
-
-	tel, err := Start(ctx)
-	require.NoError(t, err)
-
 	ctx, span := Tracer("test", "trace_context_test").Start(ctx, "my-span")
 	defer span.End()
 
@@ -35,5 +39,5 @@ func TestTraceContextFromContext(t *testing.T) {
 	// information. (It may also contain baggage.)
 	assert.Contains(t, carrier, "traceparent")
 
-	require.NoError(t, tel.Shutdown(ctx))
+	require.NoError(t, Shutdown(ctx))
 }

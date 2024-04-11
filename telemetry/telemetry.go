@@ -15,39 +15,28 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 
-	"github.com/go-logr/logr"
 	"github.com/replicate/go/logging"
 	"github.com/replicate/go/version"
 )
 
 var logger = logging.New("telemetry")
 
-type Telemetry struct {
-	*sdktrace.TracerProvider
-}
-
-// Start configures the global tracer provider and returns a handle to it so it
-// can be shut down.
-func Start(ctx context.Context) (*Telemetry, error) {
-	tp, err := createTracerProvider(ctx)
-	if err != nil {
-		return nil, err
+func init() {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		logger.Warn("using no-op tracer provider (OTEL_EXPORTER_OTLP_ENDPOINT is not set)")
+		return
 	}
 
-	otel.SetLogger(logr.New(&zapAdapter{logger: logger}))
-	otel.SetErrorHandler(ErrorHandler{})
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(
-		&TraceOptionsPropagator{
-			Next: propagation.NewCompositeTextMapPropagator(
-				propagation.TraceContext{},
-				propagation.Baggage{},
-			),
-		},
-	)
+	configureTracerProvider()
+}
 
-	return &Telemetry{tp}, nil
+func Shutdown(ctx context.Context) error {
+	if tp, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider); ok {
+		return tp.Shutdown(ctx)
+	}
+	return nil
 }
 
 // Tracer fetches a tracer, applying a standard naming convention for use across
@@ -75,9 +64,17 @@ func WithTraceContext(ctx context.Context, carrier propagation.TextMapCarrier) c
 	return propagator.Extract(ctx, carrier)
 }
 
+func configureTracerProvider() {
+	tp, err := createTracerProvider(context.Background())
+	if err != nil {
+		logger.Warn("Failed to create tracer provider", zap.Error(err))
+		return
+	}
+
+	otel.SetTracerProvider(tp)
+}
+
 func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	// The exporter uses the OTEL_EXPORTER_OTLP_ENDPOINT and
-	// OTEL_EXPORTER_OTLP_HEADERS environment variables.
 	exp, err := otlptrace.New(ctx, otlptracehttp.NewClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize trace exporter: %w", err)
@@ -104,6 +101,7 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 	sp = sdktrace.NewBatchSpanProcessor(exp)
 	sp = &DroppedDataProcessor{Next: sp} // this should remain next-to-last in the chain
 	sp = &TraceOptionsProcessor{Next: sp}
+
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sp), sdktrace.WithResource(rsrc))
 
 	return tp, nil
