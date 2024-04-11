@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/getsentry/sentry-go v0.27.0
+	github.com/go-logr/logr v1.4.1
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golangci/golangci-lint v1.57.2
 	github.com/hashicorp/go-retryablehttp v0.7.5
@@ -79,7 +80,6 @@ require (
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/ghostiam/protogetter v0.3.5 // indirect
 	github.com/go-critic/go-critic v0.11.2 // indirect
-	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect
