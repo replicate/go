@@ -5,4 +5,4 @@ set -eu
 cd "$(dirname "$0")"
 cd ..
 
-exec go run golang.org/x/tools/cmd/goimports -local github.com/replicate/go -w .
+exec go run golang.org/x/tools/cmd/goimports@latest -local github.com/replicate/go -w .

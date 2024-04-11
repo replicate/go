@@ -30,7 +30,7 @@ const (
 // Don't forget to rerun `go generate ./...` if you add or remove values from
 // the DetailLevel or SampleMode enums.
 //
-//go:generate go run golang.org/x/tools/cmd/stringer -type=DetailLevel,SampleMode -output=tracestate_string.go
+//go:generate go run golang.org/x/tools/cmd/stringer@latest -type=DetailLevel,SampleMode -output=tracestate_string.go
 type DetailLevel int
 type SampleMode int
 

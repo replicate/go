@@ -3,18 +3,23 @@
 set -eu
 
 : "${GITHUB_ACTIONS:=}"
+: "${GOTESTSUM_FORMAT:=dots-v2}"
+: "${REDIS_URL:=}"
 
 cd "$(dirname "$0")"
 cd ..
 
 if [ "$GITHUB_ACTIONS" = "true" ]; then
+  GOTESTSUM_FORMAT=github-actions
   REDIS_URL=redis://
-  export REDIS_URL
 fi
+
+export GOTESTSUM_FORMAT
+export REDIS_URL
 
 # Run the tests for the entire repository.
 #
 # You can change what this does by passing paths or other arguments to
 # gotestsum. See https://github.com/gotestyourself/gotestsum#documentation
 #
-exec go run gotest.tools/gotestsum "$@"
+exec go run gotest.tools/gotestsum@v1 "$@" -- -shuffle=on -timeout=15s ./...

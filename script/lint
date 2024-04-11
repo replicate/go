@@ -15,5 +15,5 @@ fi
 
 # On GitHub actions, this is run as a separate task
 if [ "$GITHUB_ACTIONS" != "true" ]; then
-  exec go run github.com/golangci/golangci-lint/cmd/golangci-lint run
+  exec go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.57.2 run
 fi
