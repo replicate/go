@@ -36,10 +36,8 @@ jobs:
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
-        cache: false # for this job we rely on golangci-lint-action's cache
-    - name: Lint (other)
+    - run: go mod download
+    - name: Lint
       run: script/lint
-    - name: Lint (golangci-lint)
-      uses: golangci/golangci-lint-action@v4
-      with:
-        version: v1.55.2
+    - name: Formatting
+      run: CHECKONLY=1 script/format

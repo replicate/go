@@ -7,13 +7,14 @@ set -eu
 cd "$(dirname "$0")"
 cd ..
 
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+  set -- "$@" --out-format=github-actions
+fi
+
 go generate ./...
 if ! git diff --exit-code >/dev/null; then
   echo "Error: generated code is not up-to-date! Run 'go generate ./...' and update your branch." >&2
   exit 1
 fi
 
-# On GitHub actions, this is run as a separate task
-if [ "$GITHUB_ACTIONS" != "true" ]; then
-  exec go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.57.2 run
-fi
+exec go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.57.2 run "$@"
