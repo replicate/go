@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/getsentry/sentry-go v0.27.0
-	github.com/go-logr/logr v1.4.1
+	github.com/go-logr/logr v1.4.2
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/launchdarkly/go-sdk-common/v3 v3.1.0
