@@ -34,15 +34,23 @@ func Init() {
 	}
 }
 
-func GetHub(ctx context.Context) *sentry.Hub {
-	hub := sentry.GetHubFromContext(ctx)
+// GetHub returns the current Sentry Hub from the context, or fetches the
+// default hub and attaches it to the context if needed.
+func GetHub(ctx context.Context) (context.Context, *sentry.Hub) {
+	if hub := sentry.GetHubFromContext(ctx); hub != nil {
+		return ctx, hub
+	}
+
 	// Under normal circumstances if we're calling this there should be a Hub on
 	// the passed context. But in test code the middleware might not have been set
 	// up, and so it's better to guarantee that we return a non-nil Hub.
-	if hub == nil {
-		return sentry.CurrentHub().Clone()
-	}
-	return hub
+	hub := sentry.CurrentHub()
+	ctx = sentry.SetHubOnContext(ctx, hub)
+	return ctx, hub
+}
+
+func SetHub(ctx context.Context, hub *sentry.Hub) context.Context {
+	return sentry.SetHubOnContext(ctx, hub)
 }
 
 func Middleware() func(http.Handler) http.Handler {
