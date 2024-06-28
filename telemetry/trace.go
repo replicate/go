@@ -4,17 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/replicate/go/version"
-	"go.opentelemetry.io/contrib/detectors/gcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+
+	"github.com/replicate/go/version"
 )
 
 // Tracer fetches a tracer, applying a standard naming convention for use across
@@ -58,29 +56,14 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 		return nil, fmt.Errorf("failed to initialize trace exporter: %w", err)
 	}
 
-	// The default resource uses the OTEL_SERVICE_NAME environment variable.
-	defaultResource := resource.Default()
-	detectedResource, err := resource.New(
-		ctx,
-		resource.WithSchemaURL(semconv.SchemaURL),
-		resource.WithDetectors(gcp.NewDetector()),
-		resource.WithAttributes(defaultSpanAttributes()...),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect resource attributes: %w", err)
-	}
-
-	rsrc, err := resource.Merge(defaultResource, detectedResource)
-	if err != nil {
-		return nil, fmt.Errorf("failed to merge resources: %w", err)
-	}
-
 	var sp sdktrace.SpanProcessor
 	sp = sdktrace.NewBatchSpanProcessor(exp)
 	sp = &DroppedDataProcessor{Next: sp} // this should remain next-to-last in the chain
 	sp = &TraceOptionsProcessor{Next: sp}
 
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sp), sdktrace.WithResource(rsrc))
-
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(sp),
+		sdktrace.WithResource(DefaultResource()),
+	)
 	return tp, nil
 }
