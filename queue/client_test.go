@@ -1,7 +1,9 @@
 package queue_test
 
 import (
+	crand "crypto/rand"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -304,4 +306,74 @@ func TestClientWriteIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, ttl, 23*time.Hour)
 	}
+}
+
+func benchmarkRead(streams int, b *testing.B) {
+	ctx := test.Context(b)
+	rdb := test.Redis(ctx, b)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(b, client.Prepare(ctx))
+
+	// Prepare queues
+	require.NoError(b, rdb.HSet(ctx, "testbench:meta", "streams", streams).Err())
+
+	for i := range b.N {
+		require.NoError(b, rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: fmt.Sprintf("testbench:s%d", i%streams),
+			Values: map[string]any{"id": time.Now().UnixNano()},
+		}).Err())
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		id := rand.Intn(8192)
+		for pb.Next() {
+			msg, err := client.Read(ctx, &queue.ReadArgs{
+				Name:     "testbench",
+				Group:    "benchmark",
+				Consumer: fmt.Sprintf("benchmark:%d", id),
+			})
+			require.NoError(b, err)
+			require.NotNil(b, msg)
+		}
+	})
+}
+
+func BenchmarkRead(b *testing.B) {
+	b.Run("1", func(b *testing.B) { benchmarkRead(1, b) })
+	b.Run("16", func(b *testing.B) { benchmarkRead(16, b) })
+	b.Run("64", func(b *testing.B) { benchmarkRead(64, b) })
+}
+
+func benchmarkWrite(streams, streamsPerShard int, b *testing.B) {
+	ctx := test.Context(b)
+	rdb := test.Redis(ctx, b)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(b, client.Prepare(ctx))
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		key := make([]byte, 16)
+		_, _ = crand.Read(key)
+		for pb.Next() {
+			_, err := client.Write(ctx, &queue.WriteArgs{
+				Name:            "testbench",
+				Streams:         streams,
+				StreamsPerShard: streamsPerShard,
+				ShardKey:        key,
+				Values:          map[string]any{"id": time.Now().UnixNano()},
+			})
+			require.NoError(b, err)
+		}
+	})
+}
+
+func BenchmarkWrite(b *testing.B) {
+	b.Run("1-1", func(b *testing.B) { benchmarkWrite(1, 1, b) })
+	b.Run("16-4", func(b *testing.B) { benchmarkWrite(16, 4, b) })
+	b.Run("64-6", func(b *testing.B) { benchmarkWrite(64, 6, b) })
 }
