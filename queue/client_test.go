@@ -59,6 +59,10 @@ func TestClientIntegration(t *testing.T) {
 		id++
 	}
 
+	length, err := client.Len(ctx, "test")
+	require.NoError(t, err)
+	assert.EqualValues(t, 15, length)
+
 	ids := make(map[string]struct{})
 
 	for range 15 {

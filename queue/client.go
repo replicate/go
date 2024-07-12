@@ -13,6 +13,10 @@ import (
 )
 
 var (
+	//go:embed len.lua
+	lenCmd    string
+	lenScript = redis.NewScript(lenCmd)
+
 	//go:embed read.lua
 	readCmd    string
 	readScript = redis.NewScript(readCmd)
@@ -35,6 +39,9 @@ func NewClient(rdb redis.Cmdable, ttl time.Duration) *Client {
 // Prepare stores the write and read scripts in the Redis script cache so that
 // they can be more efficiently called with EVALSHA.
 func (c *Client) Prepare(ctx context.Context) error {
+	if err := lenScript.Load(ctx, c.rdb).Err(); err != nil {
+		return err
+	}
 	if err := readScript.Load(ctx, c.rdb).Err(); err != nil {
 		return err
 	}
@@ -42,6 +49,10 @@ func (c *Client) Prepare(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Client) Len(ctx context.Context, name string) (int64, error) {
+	return lenScript.RunRO(ctx, c.rdb, []string{name}).Int64()
 }
 
 func (c *Client) Read(ctx context.Context, a *ReadArgs) (*Message, error) {
