@@ -4,13 +4,17 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	exprand "golang.org/x/exp/rand"
 
 	"github.com/replicate/go/queue"
 	"github.com/replicate/go/test"
@@ -306,6 +310,95 @@ func TestClientWriteIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, ttl, 23*time.Hour)
 	}
+}
+
+// TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by
+// running artificially slow producers and full-speed consumers -- to ensure
+// that the blocking read operation has low latency.
+//
+// This is primarily a test of the notification mechanism, which should wake up
+// waiting consumers as soon as a message is available.
+func TestPickupLatencyIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(t, client.Prepare(ctx))
+
+	n := runtime.GOMAXPROCS(0)
+	mark := time.Now()
+	runDuration := 10 * time.Second
+	producerRate := 10.0
+
+	var wg sync.WaitGroup
+
+	// Start n workers emitting messages
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			key := make([]byte, 16)
+			_, _ = crand.Read(key)
+			for time.Since(mark) < runDuration {
+				_, err := client.Write(ctx, &queue.WriteArgs{
+					Name:            "testqueue",
+					Streams:         16,
+					StreamsPerShard: 4,
+					ShardKey:        key,
+					Values:          map[string]any{"t": time.Now().UnixNano()},
+				})
+				require.NoError(t, err)
+				wait := exprand.ExpFloat64() / producerRate
+				time.Sleep(time.Duration(wait * float64(time.Second)))
+			}
+			wg.Done()
+		}()
+	}
+
+	// Start n workers consuming messages
+	var totalMessages atomic.Int64
+	var totalLatency atomic.Int64
+
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			for time.Since(mark) < runDuration {
+				msg, err := client.Read(ctx, &queue.ReadArgs{
+					Name:     "testqueue",
+					Group:    "reader",
+					Consumer: fmt.Sprintf("reader:%d", i),
+					Block:    100 * time.Millisecond,
+				})
+				// Clients racing each other to create the consumer group isn't a big
+				// deal in production so we ignore it.
+				if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
+					t.Error(err)
+				}
+
+				if msg == nil {
+					continue
+				}
+
+				nanos, _ := strconv.ParseInt(msg.Values["t"].(string), 10, 64)
+				enqueuedAt := time.Unix(0, nanos)
+				totalMessages.Add(1)
+				totalLatency.Add(time.Since(enqueuedAt).Nanoseconds())
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	messages := totalMessages.Load()
+	meanLatency := time.Duration(float64(totalLatency.Load()) / float64(totalMessages.Load()))
+
+	t.Logf("messages delivered: %d\n", messages)
+	t.Logf("mean pickup latency: %s\n", meanLatency)
+
+	expectedMessages := float64(n) * runDuration.Seconds() * producerRate
+	assert.InEpsilon(t, expectedMessages, messages, 0.1) // 10% relative error
+	assert.Less(t, meanLatency, 5*time.Millisecond)
 }
 
 func benchmarkRead(streams int, b *testing.B) {

@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -eu
+
+: "${LOG_FORMAT:=development}"
+
+cd "$(dirname "$0")"
+cd ..
+
+export LOG_FORMAT
+
+if [ "$#" -eq 0 ]; then
+  set -- ./...
+fi
+
+exec go test -bench=. -benchtime=10s -benchmem -run=^$ "$@"
