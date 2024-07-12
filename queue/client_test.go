@@ -1,10 +1,12 @@
 package queue_test
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -20,23 +22,197 @@ func TestClientIntegration(t *testing.T) {
 	client := queue.NewClient(rdb, ttl)
 	require.NoError(t, client.Prepare(ctx))
 
-	msgid, err := client.Write(ctx, &queue.WriteArgs{
+	id := 0
+
+	for range 10 {
+		_, err := client.Write(ctx, &queue.WriteArgs{
+			Name:            "test",
+			Streams:         16,
+			StreamsPerShard: 2,
+			ShardKey:        []byte("elephant"),
+			Values: map[string]any{
+				"type": "mammal",
+				"id":   id,
+			},
+		})
+		require.NoError(t, err)
+		id++
+	}
+	for range 5 {
+		_, err := client.Write(ctx, &queue.WriteArgs{
+			Name:            "test",
+			Streams:         16,
+			StreamsPerShard: 2,
+			ShardKey:        []byte("tuna"),
+			Values: map[string]any{
+				"type": "fish",
+				"id":   id,
+			},
+		})
+		require.NoError(t, err)
+		id++
+	}
+
+	ids := make(map[string]struct{})
+
+	for range 15 {
+		msg, err := client.Read(ctx, &queue.ReadArgs{
+			Name:     "test",
+			Group:    "mygroup",
+			Consumer: "mygroup:123",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, msg)
+		assert.Contains(t, msg.Values, "type")
+		assert.Contains(t, msg.Values, "id")
+		ids[msg.Values["id"].(string)] = struct{}{}
+	}
+
+	// We should have read all the messages we enqueued
+	assert.Len(t, ids, 15)
+
+	// And there should be no more messages to read
+	msg, err := client.Read(ctx, &queue.ReadArgs{
+		Name:     "test",
+		Group:    "mygroup",
+		Consumer: "mygroup:123",
+	})
+	require.NoError(t, err)
+	require.Nil(t, msg)
+}
+
+// Check that the Block option works as expected
+func TestClientBlockIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(t, client.Prepare(ctx))
+
+	result := make(chan *queue.Message, 1)
+
+	go func() {
+		msg, err := client.Read(ctx, &queue.ReadArgs{
+			Name:     "test",
+			Group:    "mygroup",
+			Consumer: "mygroup:123",
+			Block:    time.Second,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, msg)
+		result <- msg
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	_, err := client.Write(ctx, &queue.WriteArgs{
 		Name:            "test",
 		Streams:         16,
 		StreamsPerShard: 2,
-		ShardKey:        []byte("elephant"),
-		Values: map[string]any{
-			"hello": "world",
-		},
+		ShardKey:        []byte("tuna"),
+		Values:          map[string]any{"type": "fish"},
 	})
-
 	require.NoError(t, err)
-	require.NotEmpty(t, msgid)
+
+	select {
+	case msg := <-result:
+		assert.Equal(t, "fish", msg.Values["type"])
+	case <-time.After(10 * time.Millisecond):
+		t.Fatal("expected read to have succeeded")
+	}
+}
+
+func TestClientReadIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(t, client.Prepare(ctx))
+
+	// Prepare a queue with 4 streams
+	require.NoError(t, rdb.HSet(ctx, "myqueue:meta", "streams", 4).Err())
+
+	for i := range 4 {
+		for j := range 10 {
+			require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
+				Stream: fmt.Sprintf("myqueue:s%d", i),
+				Values: map[string]any{
+					"idx": fmt.Sprintf("%d-%d", i, j),
+				},
+			}).Err())
+		}
+	}
+
+	msgs := make(map[string]struct{})
+	for {
+		msg, err := client.Read(ctx, &queue.ReadArgs{
+			Name:     "myqueue",
+			Group:    "mygroup",
+			Consumer: "mygroup:123",
+		})
+		require.NoError(t, err)
+		if msg == nil {
+			break
+		}
+		msgs[msg.Values["idx"].(string)] = struct{}{}
+	}
+
+	assert.Len(t, msgs, 40)
+}
+
+func TestClientReadLegacyStreamIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewClient(rdb, ttl)
+	require.NoError(t, client.Prepare(ctx))
+
+	// Prepare a queue with 4 streams
+	require.NoError(t, rdb.HSet(ctx, "myqueue:meta", "streams", 4).Err())
+
+	// But also populate the default stream
+	for i := range 10 {
+		require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: "myqueue",
+			Values: map[string]any{
+				"idx": fmt.Sprintf("default-%d", i),
+			},
+		}).Err())
+	}
+
+	for i := range 4 {
+		for j := range 10 {
+			require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
+				Stream: fmt.Sprintf("myqueue:s%d", i),
+				Values: map[string]any{
+					"idx": fmt.Sprintf("%d-%d", i, j),
+				},
+			}).Err())
+		}
+	}
+
+	msgs := make(map[string]struct{})
+	for {
+		msg, err := client.Read(ctx, &queue.ReadArgs{
+			Name:     "myqueue",
+			Group:    "mygroup",
+			Consumer: "mygroup:123",
+		})
+		require.NoError(t, err)
+		if msg == nil {
+			break
+		}
+		msgs[msg.Values["idx"].(string)] = struct{}{}
+	}
+
+	assert.Len(t, msgs, 50)
 }
 
 func TestClientWriteIntegration(t *testing.T) {
 	ctx := test.Context(t)
-	mr, rdb := test.MiniRedis(t)
+	rdb := test.Redis(ctx, t)
 
 	ttl := 24 * time.Hour
 	client := queue.NewClient(rdb, ttl)
@@ -71,7 +247,9 @@ func TestClientWriteIntegration(t *testing.T) {
 	}
 
 	// meta key contains the number of streams
-	assert.Equal(t, "2", mr.HGet("myqueue:meta", "streams"))
+	val, err := rdb.HGet(ctx, "myqueue:meta", "streams").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
 	// notification stream contains at least one message
 	{
 		ln, err := rdb.XLen(ctx, "myqueue:notifications").Result()
@@ -114,9 +292,16 @@ func TestClientWriteIntegration(t *testing.T) {
 	}
 
 	// expiry should be set on all keys
-	mr.FastForward(ttl)
-	assert.False(t, mr.Exists("myqueue:meta"))
-	assert.False(t, mr.Exists("myqueue:notifications"))
-	assert.False(t, mr.Exists("myqueue:s0"))
-	assert.False(t, mr.Exists("myqueue:s1"))
+	keys := []string{
+		"myqueue:meta",
+		"myqueue:notifications",
+		"myqueue:s0",
+		"myqueue:s1",
+	}
+
+	for _, key := range keys {
+		ttl, err := rdb.TTL(ctx, key).Result()
+		require.NoError(t, err)
+		assert.Greater(t, ttl, 23*time.Hour)
+	}
 }
