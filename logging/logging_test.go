@@ -1,68 +1,75 @@
 package logging
 
 import (
-	"os"
 	"testing"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewConfigLevel(t *testing.T) {
-	defer os.Unsetenv("LOG_LEVEL")
-
-	// Default level is INFO
-	{
-		config := NewConfig()
-		assert.Equal(t, zap.InfoLevel, config.Level.Level())
+	testcases := []struct {
+		value string
+		level zapcore.Level
+	}{
+		{
+			value: "",
+			level: zap.InfoLevel,
+		},
+		{
+			value: "garbage",
+			level: zap.InfoLevel,
+		},
+		{
+			value: "warning",
+			level: zap.WarnLevel,
+		},
+		{
+			value: "WARN",
+			level: zap.WarnLevel,
+		},
+		{
+			value: "error",
+			level: zap.ErrorLevel,
+		},
 	}
 
-	// Unparseable level => INFO
-	os.Setenv("LOG_LEVEL", "garbage")
-	{
-		config := NewConfig()
-		assert.Equal(t, zap.InfoLevel, config.Level.Level())
-	}
-
-	os.Setenv("LOG_LEVEL", "warning")
-	{
-		config := NewConfig()
-		assert.Equal(t, zap.WarnLevel, config.Level.Level())
-	}
-
-	os.Setenv("LOG_LEVEL", "WARN")
-	{
-		config := NewConfig()
-		assert.Equal(t, zap.WarnLevel, config.Level.Level())
-	}
-
-	os.Setenv("LOG_LEVEL", "error")
-	{
-		config := NewConfig()
-		assert.Equal(t, zap.ErrorLevel, config.Level.Level())
+	for _, tc := range testcases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("LOG_FORMAT", "")
+			t.Setenv("LOG_LEVEL", tc.value)
+			config := NewConfig()
+			assert.Equal(t, tc.level, config.Level.Level())
+		})
 	}
 }
 
 func TestNewConfigFormat(t *testing.T) {
-	defer os.Unsetenv("LOG_FORMAT")
-
-	// Default is production, i.e. JSON output
-	{
-		config := NewConfig()
-		assert.Equal(t, "json", config.Encoding)
+	testcases := []struct {
+		value    string
+		encoding string
+	}{
+		{
+			value:    "",
+			encoding: "json",
+		},
+		{
+			value:    "yaml", // Unknown format
+			encoding: "json",
+		},
+		{
+			value:    "development",
+			encoding: "console",
+		},
 	}
 
-	// Unknown format => JSON output
-	os.Setenv("LOG_FORMAT", "yaml")
-	{
-		config := NewConfig()
-		assert.Equal(t, "json", config.Encoding)
-	}
-
-	os.Setenv("LOG_FORMAT", "development")
-	{
-		config := NewConfig()
-		assert.Equal(t, "console", config.Encoding)
+	for _, tc := range testcases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("LOG_FORMAT", tc.value)
+			config := NewConfig()
+			assert.Equal(t, tc.encoding, config.Encoding)
+		})
 	}
 }

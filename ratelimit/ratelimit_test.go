@@ -4,33 +4,21 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/replicate/go/test"
 )
 
 func TestLimiterIntegration(t *testing.T) {
-	if testing.Short() {
-		t.SkipNow()
-	}
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
 
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		t.Skip("REDIS_URL is not set")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	opts, err := redis.ParseURL(redisURL)
-	require.NoError(t, err)
-
-	client := redis.NewClient(opts)
-	limiter, _ := NewLimiter(client)
+	limiter, _ := NewLimiter(rdb)
 	require.NoError(t, limiter.Prepare(ctx))
 
 	// result counters
@@ -77,30 +65,21 @@ Outer:
 // Regression test for a bug where we weren't setting a TTL on the key the first
 // time the limiter was called.
 func TestLimiterAlwaysSetsExpiry(t *testing.T) {
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		t.Skip("REDIS_URL is not set")
-	}
 
 	key := fmt.Sprintf("limit:testkey:%d", rand.Uint32())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	opts, err := redis.ParseURL(redisURL)
-	require.NoError(t, err)
-
-	client := redis.NewClient(opts)
-	limiter, _ := NewLimiter(client)
+	mr, rdb := test.MiniRedis(t)
+	ctx := test.Context(t)
+	limiter, _ := NewLimiter(rdb)
 	require.NoError(t, limiter.Prepare(ctx))
 
 	// Clean up at the end of the test
-	defer client.Del(ctx, key)
+	t.Cleanup(func() { rdb.Del(ctx, key) })
 
 	_, _ = limiter.Take(ctx, key, 1, 100, 10000)
 
-	ttl := client.TTL(ctx, key).Val()
-	require.Greater(t, ttl, time.Duration(0))
+	mr.FastForward(time.Minute)
+	assert.False(t, mr.Exists(key))
 }
 
 func TestLimiterTakeWithNegativeInputsReturnsError(t *testing.T) {

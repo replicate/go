@@ -4,6 +4,8 @@ set -eu
 
 : "${GITHUB_ACTIONS:=}"
 : "${GOTESTSUM_FORMAT:=dots-v2}"
+: "${INTEGRATION:=}"
+: "${LOG_FORMAT:=development}"
 : "${REDIS_URL:=}"
 
 cd "$(dirname "$0")"
@@ -11,15 +13,24 @@ cd ..
 
 if [ "$GITHUB_ACTIONS" = "true" ]; then
   GOTESTSUM_FORMAT=github-actions
+  INTEGRATION=1
   REDIS_URL=redis://
 fi
 
 export GOTESTSUM_FORMAT
+export LOG_FORMAT
 export REDIS_URL
 
-# Run the tests for the entire repository.
-#
-# You can change what this does by passing paths or other arguments to
-# gotestsum. See https://github.com/gotestyourself/gotestsum#documentation
-#
-exec go run gotest.tools/gotestsum@v1 "$@" -- -shuffle=on -timeout=15s ./...
+if [ "$#" -eq 0 ]; then
+  set -- ./...
+fi
+
+# Run unit tests
+go run gotest.tools/gotestsum@v1.12.0 -- -skip=Integration -race -shuffle=on -timeout=1s "$@"
+
+# Run integration tests
+if [ -z "$INTEGRATION" ]; then
+  printf "\033[1mNote:\033[0m skipping integration tests: set INTEGRATION=1 to run them.\n" >&2
+  exit
+fi
+go run gotest.tools/gotestsum@v1.12.0 -- -run=Integration -p=1 -race -shuffle=on -timeout=30s "$@"

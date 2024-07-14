@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-redis/redismock/v9"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/replicate/go/test"
 )
 
 func TestLockerTryAcquireReturnsLockWhenSetSucceeds(t *testing.T) {
@@ -151,18 +151,9 @@ func TestLockReleaseReturnsRedisErrors(t *testing.T) {
 }
 
 func TestLockAcquireIntegration(t *testing.T) {
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		t.Skip("REDIS_URL is not set")
-	}
-
-	ctx := context.Background()
-
-	opts, err := redis.ParseURL(redisURL)
-	require.NoError(t, err)
-
-	client := redis.NewClient(opts)
-	locker := Locker{Client: client}
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+	locker := Locker{Client: rdb}
 
 	require.NoError(t, locker.Prepare(ctx))
 
@@ -209,18 +200,9 @@ func TestLockAcquireIntegration(t *testing.T) {
 }
 
 func TestLockTryAcquireIntegration(t *testing.T) {
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		t.Skip("REDIS_URL is not set")
-	}
-
-	ctx := context.Background()
-
-	opts, err := redis.ParseURL(redisURL)
-	require.NoError(t, err)
-
-	client := redis.NewClient(opts)
-	locker := Locker{Client: client}
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+	locker := Locker{Client: rdb}
 
 	require.NoError(t, locker.Prepare(ctx))
 
