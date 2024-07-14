@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/replicate/go/version"
 )
 

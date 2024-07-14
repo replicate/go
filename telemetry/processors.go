@@ -3,9 +3,10 @@ package telemetry
 import (
 	"context"
 
-	"github.com/replicate/go/telemetry/semconv"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.uber.org/zap"
+
+	"github.com/replicate/go/telemetry/semconv"
 )
 
 // Check DroppedDataProcessor implements SpanProcessor
