@@ -16,6 +16,7 @@ func TestInit(t *testing.T) {
 	// This is usually called by package init, but here we call it explicitly so
 	// the lack of an OTEL_EXPORTER_OTLP_ENDPOINT doesn't cause us to skip it.
 	configureTracerProvider()
+	configureMeterProvider(false)
 
 	tp := otel.GetTracerProvider()
 	assert.IsType(t, &sdktrace.TracerProvider{}, tp)
@@ -28,6 +29,7 @@ func TestTraceContextFromContext(t *testing.T) {
 	// This is usually called by package init, but here we call it explicitly so
 	// the lack of an OTEL_EXPORTER_OTLP_ENDPOINT doesn't cause us to skip it.
 	configureTracerProvider()
+	configureMeterProvider(false)
 
 	ctx := context.Background()
 	ctx, span := Tracer("test", "trace_context_test").Start(ctx, "my-span")
