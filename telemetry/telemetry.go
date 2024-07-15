@@ -25,12 +25,12 @@ func init() {
 }
 
 func Shutdown(ctx context.Context) error {
-	if tp, ok := otel.GetTracerProvider().(*trace.TracerProvider); ok {
+	if tp, ok := otel.GetTracerProvider().(*trace.TracerProvider); ok && tp != nil {
 		if err := tp.Shutdown(ctx); err != nil {
 			return err
 		}
 	}
-	if mp, ok := otel.GetMeterProvider().(*metric.MeterProvider); ok {
+	if mp, ok := otel.GetMeterProvider().(*metric.MeterProvider); ok && mp != nil {
 		if err := mp.Shutdown(ctx); err != nil {
 			return err
 		}
