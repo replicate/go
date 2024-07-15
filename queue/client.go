@@ -3,10 +3,12 @@ package queue
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/replicate/go/shuffleshard"
 )
@@ -98,7 +100,18 @@ func (c *Client) readOnce(ctx context.Context, args *ReadArgs) (*Message, error)
 		return nil, err
 	}
 
-	return parse(result)
+	msg, err := parse(result)
+	if err != nil {
+		return nil, err
+	}
+
+	d, err := calculatePickupDelayFromID(msg.ID)
+	if err == nil {
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(pickupDelay(d))
+	}
+
+	return msg, nil
 }
 
 func (c *Client) wait(ctx context.Context, args *ReadArgs) (bool, error) {
@@ -245,4 +258,12 @@ func parseMapFromSlice(v any) (map[string]any, error) {
 		m[slice[i].(string)] = slice[i+1]
 	}
 	return m, nil
+}
+
+func calculatePickupDelayFromID(id string) (time.Duration, error) {
+	i, err := strconv.ParseInt(id[:13], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse message ID as timestamp: %s", id)
+	}
+	return time.Since(time.UnixMilli(i)), nil
 }
