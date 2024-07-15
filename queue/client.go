@@ -44,7 +44,7 @@ func (c *Client) Len(ctx context.Context, name string) (int64, error) {
 // non-zero, the call may block for up to that duration waiting for a new
 // message.
 //
-// If no message is available both return values will be nil.
+// If no message is available err will be [Empty].
 func (c *Client) Read(ctx context.Context, args *ReadArgs) (*Message, error) {
 	if args == nil {
 		return nil, fmt.Errorf("%w: args cannot be nil", ErrInvalidReadArgs)
@@ -64,17 +64,14 @@ func (c *Client) Read(ctx context.Context, args *ReadArgs) (*Message, error) {
 
 func (c *Client) read(ctx context.Context, args *ReadArgs) (*Message, error) {
 	result, err := c.readOnce(ctx, args)
-	if err != nil {
-		return nil, err
-	}
-	if result != nil {
-		return result, nil
+	if result != nil || (err != nil && err != Empty) {
+		return result, err
 	}
 
 	// If we're here, the queue was Empty. We only have more work to do if
 	// args.Block is non-zero.
 	if args.Block == 0 {
-		return nil, nil
+		return nil, Empty
 	}
 
 	// Wait for a message to be signaled on the notifications stream.
@@ -83,7 +80,8 @@ func (c *Client) read(ctx context.Context, args *ReadArgs) (*Message, error) {
 		return nil, err
 	}
 	if !ok {
-		return nil, nil
+		// No message was signaled within the block time.
+		return nil, Empty
 	}
 
 	return c.readOnce(ctx, args)
@@ -95,7 +93,7 @@ func (c *Client) readOnce(ctx context.Context, args *ReadArgs) (*Message, error)
 	result, err := readScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Result()
 	switch {
 	case err == redis.Nil:
-		return nil, nil
+		return nil, Empty
 	case err != nil:
 		return nil, err
 	}

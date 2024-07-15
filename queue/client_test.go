@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	crand "crypto/rand"
+	"errors"
 	"fmt"
 	"math/rand"
 	"runtime"
@@ -82,13 +83,12 @@ func TestClientIntegration(t *testing.T) {
 	assert.Len(t, ids, 15)
 
 	// And there should be no more messages to read
-	msg, err := client.Read(ctx, &queue.ReadArgs{
+	_, err = client.Read(ctx, &queue.ReadArgs{
 		Name:     "test",
 		Group:    "mygroup",
 		Consumer: "mygroup:123",
 	})
-	require.NoError(t, err)
-	require.Nil(t, msg)
+	require.ErrorIs(t, err, queue.Empty)
 }
 
 // Check that the Block option works as expected
@@ -161,10 +161,10 @@ func TestClientReadIntegration(t *testing.T) {
 			Group:    "mygroup",
 			Consumer: "mygroup:123",
 		})
-		require.NoError(t, err)
-		if msg == nil {
+		if errors.Is(err, queue.Empty) {
 			break
 		}
+		require.NoError(t, err)
 		msgs[msg.Values["idx"].(string)] = struct{}{}
 	}
 
@@ -210,10 +210,10 @@ func TestClientReadLegacyStreamIntegration(t *testing.T) {
 			Group:    "mygroup",
 			Consumer: "mygroup:123",
 		})
-		require.NoError(t, err)
-		if msg == nil {
+		if errors.Is(err, queue.Empty) {
 			break
 		}
+		require.NoError(t, err)
 		msgs[msg.Values["idx"].(string)] = struct{}{}
 	}
 
@@ -373,13 +373,15 @@ func TestPickupLatencyIntegration(t *testing.T) {
 					Consumer: fmt.Sprintf("reader:%d", i),
 					Block:    100 * time.Millisecond,
 				})
-				// Clients racing each other to create the consumer group isn't a big
-				// deal in production so we ignore it.
-				if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-					t.Error(err)
-				}
-
-				if msg == nil {
+				switch {
+				case errors.Is(err, queue.Empty):
+					continue
+				case err != nil:
+					// Clients racing each other to create the consumer group isn't a big
+					// deal in production so we ignore it.
+					if err.Error() != "BUSYGROUP Consumer Group name already exists" {
+						t.Error(err)
+					}
 					continue
 				}
 

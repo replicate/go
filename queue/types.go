@@ -4,6 +4,16 @@ import (
 	"time"
 )
 
+type queueError string
+
+func (e queueError) Error() string {
+	return string(e)
+}
+
+// Empty is the sentinel error returned from read calls when no messages are
+// available.
+const Empty = queueError("queue: empty")
+
 type WriteArgs struct {
 	Name   string         // queue name
 	Values map[string]any // message values
