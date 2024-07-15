@@ -14,22 +14,26 @@ import (
 var logger = logging.New("telemetry")
 
 func init() {
+	configureMeterProvider(false)
+
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		logger.Warn("metrics/traces will not be exported via OTLP (OTEL_EXPORTER_OTLP_ENDPOINT is not set)")
-		configureMeterProvider(false)
+		logger.Warn("traces will not be exported via OTLP (OTEL_EXPORTER_OTLP_ENDPOINT is not set)")
 		return
 	}
 
-	configureMeterProvider(true)
 	configureTracerProvider()
 }
 
 func Shutdown(ctx context.Context) error {
 	if tp, ok := otel.GetTracerProvider().(*trace.TracerProvider); ok {
-		return tp.Shutdown(ctx)
+		if err := tp.Shutdown(ctx); err != nil {
+			return err
+		}
 	}
 	if mp, ok := otel.GetMeterProvider().(*metric.MeterProvider); ok {
-		return mp.Shutdown(ctx)
+		if err := mp.Shutdown(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
