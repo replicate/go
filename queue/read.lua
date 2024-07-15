@@ -68,26 +68,29 @@ local function checkstream (stream)
   return reply
 end
 
--- Use the microseconds part of the current time to determine which stream we
--- start at. This should provide us with enough randomness to provide fairness
--- across the streams without needing to persist state across calls.
-local time = redis.call('TIME')
-local start = tonumber(time[2], 10) % streams
+-- Use a global shared offset to determine where to start reading. Whenever we
+-- find a message, update the shared offset to point to the *next* stream. This
+-- should ensure fairness of reads across all the streams.
+--
+-- It doesn't matter if offset is >= streams, because we ensure that the value
+-- is appropriately wrapped before using it.
+local offset = tonumber(redis.call('HGET', key_meta, 'offset') or 0)
 
 for idx = 0, streams do
-  -- Which stream are we checking?
-  local sid = (start + idx) % streams
+  local streamid = (offset + idx) % streams
 
-  -- LEGACY: for now, if we're checking SID 0, also check the default stream.
-  if sid == 0 and check_default_stream then
+  -- LEGACY: for now, if we're checking stream 0, also check the default stream.
+  if streamid == 0 and check_default_stream then
     local reply = checkstream(base)
     if reply then
+      redis.call('HSET', key_meta, 'offset', (offset + idx + 1) % streams)
       return reply
     end
   end
 
-  local reply = checkstream(base .. ':s' .. sid)
+  local reply = checkstream(base .. ':s' .. streamid)
   if reply then
+    redis.call('HSET', key_meta, 'offset', (offset + idx + 1) % streams)
     return reply
   end
 end
