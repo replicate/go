@@ -218,25 +218,17 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		return err
 	}
 
+	pipe := c.client.TxPipeline()
+
 	// Remove any explicit nonexistence sentinel
-	err = c.client.Del(ctx, keys.negative).Err()
-	if err != nil {
-		return err
-	}
-
+	pipe.Del(ctx, keys.negative)
 	// Update cached value
-	err = c.client.Set(ctx, keys.data, string(data), c.opts.Stale).Err()
-	if err != nil {
-		return err
-	}
-
+	pipe.Set(ctx, keys.data, string(data), c.opts.Stale)
 	// Set freshness sentinel
-	err = c.client.Set(ctx, keys.fresh, 1, c.opts.Fresh).Err()
-	if err != nil {
-		return err
-	}
+	pipe.Set(ctx, keys.fresh, 1, c.opts.Fresh)
 
-	return nil
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
