@@ -217,6 +217,10 @@ func TestClientReadLegacyStreamIntegration(t *testing.T) {
 		msgs[msg.Values["idx"].(string)] = struct{}{}
 	}
 
+	ttl, err := rdb.TTL(ctx, "myqueue:meta").Result()
+	require.NoError(t, err)
+	assert.Greater(t, ttl, 23*time.Hour)
+
 	assert.Len(t, msgs, 50)
 }
 
