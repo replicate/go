@@ -84,6 +84,7 @@ for idx = 0, streams do
     local reply = checkstream(base)
     if reply then
       redis.call('HSET', key_meta, 'offset', (offset + idx + 1) % streams)
+      redis.call('EXPIRE', key_meta, ttl)
       return reply
     end
   end
@@ -91,6 +92,7 @@ for idx = 0, streams do
   local reply = checkstream(base .. ':s' .. streamid)
   if reply then
     redis.call('HSET', key_meta, 'offset', (offset + idx + 1) % streams)
+    redis.call('EXPIRE', key_meta, ttl)
     return reply
   end
 end

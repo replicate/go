@@ -102,7 +102,7 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 -- Add a notification to the notifications stream
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
--- Set expiry on all selected streams + meta key
+-- Set expiry on selected stream + meta/notifications keys
 redis.call('EXPIRE', key_stream, ttl)
 redis.call('EXPIRE', key_meta, ttl)
 redis.call('EXPIRE', key_notifications, ttl)
