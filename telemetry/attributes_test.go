@@ -27,24 +27,24 @@ var attributeTestCases = []struct {
 		JSON: `{"age": 42, "zero": 0, "bigger_than_int32": 2147483650}`,
 		KVs: []attribute.KeyValue{
 			attribute.Int("age", 42),
-			attribute.Int("zero", 0),
 			attribute.Int("bigger_than_int32", 2147483650),
+			attribute.Int("zero", 0),
 		},
 	},
 	{
 		Name: "float64",
 		JSON: `{"pi": 3.141592653589793, "negative": -1.234567}`,
 		KVs: []attribute.KeyValue{
-			attribute.Float64("pi", 3.141592653589793),
 			attribute.Float64("negative", -1.234567),
+			attribute.Float64("pi", 3.141592653589793),
 		},
 	},
 	{
 		Name: "string",
 		JSON: `{"name": "Boz", "empty": ""}`,
 		KVs: []attribute.KeyValue{
-			attribute.String("name", "Boz"),
 			attribute.String("empty", ""),
+			attribute.String("name", "Boz"),
 		},
 	},
 	{
@@ -73,8 +73,8 @@ var attributeTestCases = []struct {
 		Name: "string slice",
 		JSON: `{"hobbies": ["gardening", "fishing"], "empty": []}`,
 		KVs: []attribute.KeyValue{
-			attribute.StringSlice("hobbies", []string{"gardening", "fishing"}),
 			attribute.StringSlice("empty", []string{}),
+			attribute.StringSlice("hobbies", []string{"gardening", "fishing"}),
 		},
 	},
 }
@@ -123,7 +123,7 @@ func TestAttributesUnmarshal(t *testing.T) {
 			err := json.Unmarshal([]byte(tc.JSON), &attrs)
 			require.NoError(t, err)
 
-			assert.ElementsMatch(t, tc.KVs, attrs)
+			assert.Equal(t, Attributes(tc.KVs), attrs)
 		})
 	}
 }
