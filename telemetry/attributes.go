@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -55,6 +56,9 @@ func (as *Attributes) UnmarshalJSON(b []byte) error {
 		}
 		kvs = append(kvs, attribute.KeyValue{Key: key, Value: value})
 	}
+	sort.Slice(kvs, func(i, j int) bool {
+		return string(kvs[i].Key) < string(kvs[j].Key)
+	})
 
 	*as = kvs
 
