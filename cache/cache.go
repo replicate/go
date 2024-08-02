@@ -61,7 +61,7 @@ func NewCache[T any](
 	c := Cache[T]{
 		name:   name,
 		client: client,
-		locker: lock.Locker{Client: client},
+		locker: lock.Locker{Clients: []redis.Cmdable{client}},
 	}
 
 	c.opts.Fresh = fresh

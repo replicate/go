@@ -1,11 +1,16 @@
-// Package lock implements a basic distributed lock that is held in a single
-// Redis instance.
+// Package lock implements a basic distributed lock that is held in N redis
+// instances.  Normally N should be 1, but the package supports multiple
+// instances to support migrating from one instance to another.
 //
 // The locking primitives exposed by this package should not be used for any
 // application in which the lock is critical for correctness. The guarantees
 // that can be made by a lock of this nature are only suitable for applications
 // which lock for efficiency (e.g. in order to avoid doing expensive work, such
 // as refilling a cache, multiple times).
+//
+// When backed by multiple redis instances, locks will be acquired in the order
+// given by the redis.Cmdable slice.  To avoid deadlocks, ensure every Locker
+// client uses the same ordering of redis clients.
 package lock
 
 import (
@@ -25,7 +30,7 @@ var ErrLockNotAcquired = errors.New("locker: did not acquire lock")
 var ErrLockNotHeld = errors.New("locker: lock was not held")
 
 type Locker struct {
-	Client redis.Cmdable
+	Clients []redis.Cmdable
 
 	tokenGenerator func() string // test seam
 }
@@ -35,18 +40,20 @@ type Lock interface {
 }
 
 type lock struct {
-	client redis.Cmdable
-	key    string
-	token  string
+	clients []redis.Cmdable
+	key     string
+	token   string
 }
 
 // Prepare preloads any Lua scripts needed by locker. This allows later commands
 // to use EVALSHA rather than straight EVAL. Calling Prepare is optional but
 // recommended.
 func (l Locker) Prepare(ctx context.Context) error {
-	_, err := releaseScript.Load(ctx, l.Client).Result()
-	if err != nil {
-		return err
+	for _, client := range l.Clients {
+		_, err := releaseScript.Load(ctx, client).Result()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -67,7 +74,7 @@ func (l Locker) Acquire(ctx context.Context, key string, ttl time.Duration) (Loc
 		if err == nil {
 			return lock, nil
 		}
-		if err != ErrLockNotAcquired {
+		if !errors.Is(err, ErrLockNotAcquired) {
 			return nil, err
 		}
 
@@ -89,19 +96,23 @@ func (l Locker) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 	}
 	token := l.tokenGenerator()
 
-	ok, err := l.Client.SetNX(ctx, key, token, ttl).Result()
-	if err != nil {
-		return nil, err
+	ret := lock{
+		clients: l.Clients,
+		key:     key,
+		token:   token,
 	}
-	if !ok {
-		return nil, ErrLockNotAcquired
+	for i, client := range l.Clients {
+		ok, err := client.SetNX(ctx, key, token, ttl).Result()
+		if err != nil {
+			releaseErr := ret.release(ctx, i)
+			return nil, errors.Join(err, releaseErr)
+		}
+		if !ok {
+			releaseErr := ret.release(ctx, i)
+			return nil, errors.Join(ErrLockNotAcquired, releaseErr)
+		}
 	}
 
-	ret := lock{
-		client: l.Client,
-		key:    key,
-		token:  token,
-	}
 	return &ret, nil
 }
 
@@ -110,15 +121,24 @@ func (l Locker) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 // ErrLockNotHeld. It may also return errors if it cannot communicate with
 // Redis.
 func (l *lock) Release(ctx context.Context) error {
-	result, err := releaseScript.Run(ctx, l.client, []string{l.key}, l.token).Result()
-	if err != nil {
-		return err
-	}
+	return l.release(ctx, len(l.clients))
+}
 
-	if i, ok := result.(int64); !ok || i != 1 {
-		return ErrLockNotHeld
+func (l *lock) release(ctx context.Context, n int) error {
+	errs := []error{}
+
+	// We release locks in the opposite order from acquiring them, to prevent deadlocks
+	for i := n - 1; i >= 0; i-- {
+		result, err := releaseScript.Run(ctx, l.clients[i], []string{l.key}, l.token).Result()
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		if i, ok := result.(int64); !ok || i != 1 {
+			errs = append(errs, ErrLockNotHeld)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func generateKSUID() string {

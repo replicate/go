@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -20,7 +21,7 @@ func TestLockerTryAcquireReturnsLockWhenSetSucceeds(t *testing.T) {
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "giraffe" },
 	}
 
@@ -38,7 +39,7 @@ func TestLockerTryAcquireReturnsErrLockNotAcquiredWhenSetFails(t *testing.T) {
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "elephant" },
 	}
 
@@ -56,7 +57,7 @@ func TestLockerTryAcquireReturnsRedisErrors(t *testing.T) {
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "moose" },
 	}
 
@@ -69,12 +70,87 @@ func TestLockerTryAcquireReturnsRedisErrors(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLockerTryAcquireSupportsMultipleClients(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "rhino" },
+	}
+
+	mock1.ExpectSetNX(k, "rhino", 1*time.Second).SetVal(true)
+	mock2.ExpectSetNX(k, "rhino", 1*time.Second).SetVal(true)
+
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, l)
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
+func TestLockerTryAcquireReleasesClient1WhenClient2DoesNotAcquireLock(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "wildebeest" },
+	}
+
+	mock1.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock2.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+
+	mock1.ExpectSetNX(k, "wildebeest", 1*time.Second).SetVal(true)
+	mock2.ExpectSetNX(k, "wildebeest", 1*time.Second).SetVal(false)
+	mock1.ExpectEvalSha(releaseScript.Hash(), []string{k}, "wildebeest").SetVal(int64(1))
+
+	err := locker.Prepare(ctx)
+	assert.NoError(t, err)
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.ErrorIs(t, err, ErrLockNotAcquired)
+	assert.Nil(t, l)
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
+func TestLockerTryAcquireReleasesClient1WhenClient2Errors(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "wildebeest" },
+	}
+
+	mock1.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock2.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+
+	mock1.ExpectSetNX(k, "wildebeest", 1*time.Second).SetVal(true)
+	mock2.ExpectSetNX(k, "wildebeest", 1*time.Second).SetErr(errors.New("explode"))
+	mock1.ExpectEvalSha(releaseScript.Hash(), []string{k}, "wildebeest").SetVal(int64(1))
+
+	err := locker.Prepare(ctx)
+	assert.NoError(t, err)
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.ErrorContains(t, err, "explode")
+	assert.Nil(t, l)
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
 func TestLockReleaseReturnsNilWhenLockSuccessfullyReleased(t *testing.T) {
 	ctx := context.Background()
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "platypus" },
 	}
 
@@ -96,12 +172,44 @@ func TestLockReleaseReturnsNilWhenLockSuccessfullyReleased(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLockReleaseSupportsMultipleClients(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "platypus" },
+	}
+
+	mock1.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock1.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock1.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetVal(int64(1))
+	mock2.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock2.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock2.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetVal(int64(1))
+
+	err := locker.Prepare(ctx)
+	assert.NoError(t, err)
+
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, l)
+
+	err = l.Release(ctx)
+
+	assert.NoError(t, err)
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
 func TestLockReleaseReturnsErrLockNotHeldIfLockWasNotReleased(t *testing.T) {
 	ctx := context.Background()
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "platypus" },
 	}
 
@@ -128,7 +236,7 @@ func TestLockReleaseReturnsRedisErrors(t *testing.T) {
 	k := "somekey"
 	client, mock := redismock.NewClientMock()
 	locker := Locker{
-		Client:         client,
+		Clients:        []redis.Cmdable{client},
 		tokenGenerator: func() string { return "platypus" },
 	}
 
@@ -150,10 +258,74 @@ func TestLockReleaseReturnsRedisErrors(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLockReleaseTriesToReleaseAllClientsOnLockNotHeld(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "platypus" },
+	}
+
+	mock1.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock1.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock1.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetVal(int64(1))
+	mock2.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock2.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock2.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetVal(int64(0))
+
+	err := locker.Prepare(ctx)
+	assert.NoError(t, err)
+
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, l)
+
+	err = l.Release(ctx)
+
+	assert.ErrorIs(t, err, ErrLockNotHeld)
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
+func TestLockReleaseTriesToReleaseAllClientsOnRedisError(t *testing.T) {
+	ctx := context.Background()
+	k := "somekey"
+	client1, mock1 := redismock.NewClientMock()
+	client2, mock2 := redismock.NewClientMock()
+	locker := Locker{
+		Clients:        []redis.Cmdable{client1, client2},
+		tokenGenerator: func() string { return "platypus" },
+	}
+
+	mock1.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock1.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock1.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetVal(int64(1))
+	mock2.Regexp().ExpectScriptLoad(`if redis.call\("get", KEYS\[1\]\) .+`).SetVal(releaseScript.Hash())
+	mock2.ExpectSetNX(k, "platypus", 1*time.Second).SetVal(true)
+	mock2.ExpectEvalSha(releaseScript.Hash(), []string{k}, "platypus").SetErr(errors.New("boom"))
+
+	err := locker.Prepare(ctx)
+	assert.NoError(t, err)
+
+	l, err := locker.TryAcquire(ctx, k, 1*time.Second)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, l)
+
+	err = l.Release(ctx)
+
+	assert.ErrorContains(t, err, "boom")
+	assert.NoError(t, mock1.ExpectationsWereMet())
+	assert.NoError(t, mock2.ExpectationsWereMet())
+}
+
 func TestLockAcquireIntegration(t *testing.T) {
 	ctx := test.Context(t)
 	rdb := test.Redis(ctx, t)
-	locker := Locker{Client: rdb}
+	locker := Locker{Clients: []redis.Cmdable{rdb}}
 
 	require.NoError(t, locker.Prepare(ctx))
 
@@ -202,7 +374,7 @@ func TestLockAcquireIntegration(t *testing.T) {
 func TestLockTryAcquireIntegration(t *testing.T) {
 	ctx := test.Context(t)
 	rdb := test.Redis(ctx, t)
-	locker := Locker{Client: rdb}
+	locker := Locker{Clients: []redis.Cmdable{rdb}}
 
 	require.NoError(t, locker.Prepare(ctx))
 
@@ -220,7 +392,7 @@ func TestLockTryAcquireIntegration(t *testing.T) {
 			<-start
 
 			lock, err := locker.TryAcquire(ctx, "giraffe", 1*time.Second)
-			if err == ErrLockNotAcquired {
+			if errors.Is(err, ErrLockNotAcquired) {
 				return
 			}
 			require.NoError(t, err)
