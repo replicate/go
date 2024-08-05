@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -79,6 +80,29 @@ func (m mockWrapper) ExpectCacheFill(key string, value any) {
 	m.ExpectTxPipelineExec()
 }
 
+func (m mockWrapper) ExpectCacheFillWithLock(key string, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	lockMultiple := "cache:lock-multiple:" + m.name + ":" + key
+	m.Regexp().ExpectSetNX(lockMultiple, `.*`, 5*time.Second).SetVal(true)
+	m.ExpectTxPipeline()
+	m.ExpectDel("cache:negative:" + m.name + ":" + key).SetVal(0)
+	m.ExpectSet("cache:data:"+m.name+":"+key, string(data), m.stale).SetVal("OK")
+	m.ExpectSet("cache:fresh:"+m.name+":"+key, 1, m.fresh).SetVal("OK")
+	m.ExpectTxPipelineExec()
+	m.Regexp().ExpectEvalSha(`.*`, []string{lockMultiple}, `.*`).SetVal(int64(1))
+}
+
+func (m mockWrapper) ExpectCacheFillWithLockErr(key string, err error) {
+	lockMultiple := "cache:lock-multiple:" + m.name + ":" + key
+	m.Regexp().ExpectSetNX(lockMultiple, `.*`, 5*time.Second).SetVal(true)
+	m.ExpectTxPipeline()
+	m.ExpectDel("cache:negative:" + m.name + ":" + key).SetErr(err)
+	m.Regexp().ExpectEvalSha(`.*`, []string{lockMultiple}, `.*`).SetVal(int64(1))
+}
+
 func (m mockWrapper) ExpectCacheFillNegative(key string) {
 	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
 }
@@ -138,6 +162,120 @@ func TestCacheReturnsValueFromCache(t *testing.T) {
 	assert.NotNil(t, v)
 	assert.Equal(t, "value_for:elephant_from_cache", v.Value)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
+}
+
+func TestMultipleCacheReturnsValueFromAnyCache(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client1, mock1 := redismock.NewClientMock()
+	cacheMock1 := mockWrapper{
+		ClientMock: mock1,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	client2, mock2 := redismock.NewClientMock()
+	cacheMock2 := mockWrapper{
+		ClientMock: mock2,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCacheMultipleBackends[testObj]([]redis.Cmdable{client1, client2}, "objects", fresh, stale)
+
+	obj := testObj{Value: "value_for:elephant_from_cache"}
+
+	cacheMock1.ExpectCacheFetchEmpty("elephant")
+	cacheMock2.ExpectCacheFetchFresh("elephant", obj)
+
+	v, err := cache.Get(ctx, "elephant", fetchTestObj)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, v)
+	assert.Equal(t, "value_for:elephant_from_cache", v.Value)
+	assert.NoError(t, cacheMock1.ExpectationsWereMet())
+	assert.NoError(t, cacheMock2.ExpectationsWereMet())
+}
+
+func TestMultipleCacheReturnsValueFromFirstCacheHit(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client1, mock1 := redismock.NewClientMock()
+	cacheMock1 := mockWrapper{
+		ClientMock: mock1,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	client2, mock2 := redismock.NewClientMock()
+	cacheMock2 := mockWrapper{
+		ClientMock: mock2,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCacheMultipleBackends[testObj]([]redis.Cmdable{client1, client2}, "objects", fresh, stale)
+
+	obj1 := testObj{Value: "value_for:elephant_from_cache1"}
+
+	cacheMock1.ExpectCacheFetchFresh("elephant", obj1)
+	// no expectations for cache2, it should not be touched
+
+	v, err := cache.Get(ctx, "elephant", fetchTestObj)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, v)
+	assert.Equal(t, "value_for:elephant_from_cache1", v.Value)
+	assert.NoError(t, cacheMock1.ExpectationsWereMet())
+	assert.NoError(t, cacheMock2.ExpectationsWereMet())
+}
+
+func TestMultipleCacheFreshOverridesNegative(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client1, mock1 := redismock.NewClientMock()
+	cacheMock1 := mockWrapper{
+		ClientMock: mock1,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	client2, mock2 := redismock.NewClientMock()
+	cacheMock2 := mockWrapper{
+		ClientMock: mock2,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCacheMultipleBackends[testObj]([]redis.Cmdable{client1, client2}, "objects", fresh, stale)
+
+	obj := testObj{Value: "value_for:elephant_from_cache"}
+
+	cacheMock1.ExpectCacheFetchNegative("elephant")
+	cacheMock2.ExpectCacheFetchFresh("elephant", obj)
+
+	v, err := cache.Get(ctx, "elephant", fetchTestObj)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, v)
+	assert.Equal(t, "value_for:elephant_from_cache", v.Value)
+	assert.NoError(t, cacheMock1.ExpectationsWereMet())
+	assert.NoError(t, cacheMock2.ExpectationsWereMet())
 }
 
 // If non-existence is cached, we should get ErrDoesNotExist immediately from
@@ -248,6 +386,79 @@ func TestCacheSet(t *testing.T) {
 	err := cache.Set(ctx, "elephant", obj)
 
 	assert.NoError(t, err)
+	assert.NoError(t, cacheMock.ExpectationsWereMet())
+}
+
+func TestMultipleCacheSet(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client1, mock1 := redismock.NewClientMock()
+	cacheMock1 := mockWrapper{
+		ClientMock: mock1,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	client2, mock2 := redismock.NewClientMock()
+	cacheMock2 := mockWrapper{
+		ClientMock: mock2,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCacheMultipleBackends[testObj]([]redis.Cmdable{client1, client2}, "objects", fresh, stale)
+
+	obj := testObj{Value: "value_for:elephant"}
+
+	cacheMock1.ExpectCacheFillWithLock("elephant", obj)
+	cacheMock2.ExpectCacheFillWithLock("elephant", obj)
+
+	err := cache.Set(ctx, "elephant", obj)
+
+	assert.NoError(t, err)
+	assert.NoError(t, cacheMock1.ExpectationsWereMet())
+	assert.NoError(t, cacheMock2.ExpectationsWereMet())
+}
+
+func TestMultipleCacheSetWritesToAllBackendsEvenWhenOneErrors(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client1, mock1 := redismock.NewClientMock()
+	cacheMock1 := mockWrapper{
+		ClientMock: mock1,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	client2, mock2 := redismock.NewClientMock()
+	cacheMock2 := mockWrapper{
+		ClientMock: mock2,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCacheMultipleBackends[testObj]([]redis.Cmdable{client1, client2}, "objects", fresh, stale)
+
+	obj := testObj{Value: "value_for:elephant"}
+
+	cacheMock1.ExpectCacheFillWithLockErr("elephant", errors.New("kaboom"))
+	cacheMock2.ExpectCacheFillWithLock("elephant", obj)
+
+	err := cache.Set(ctx, "elephant", obj)
+
+	assert.ErrorContains(t, err, "kaboom")
+	assert.NoError(t, cacheMock1.ExpectationsWereMet())
+	assert.NoError(t, cacheMock2.ExpectationsWereMet())
 }
 
 func TestCacheSetNilForbidden(t *testing.T) {
