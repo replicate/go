@@ -2,6 +2,11 @@
 // fetching fresh data, and which takes a distributed lock before attempting a
 // refresh in order to greatly reduce possible cache stampede effects.
 //
+// There is minimal support for multiple backends via NewCacheMultipleBackends.
+// This is intended to be used for short durations to support migrating from one
+// backend to another.  It acquires pessimistic locks for write operations, so
+// performance will be worse.
+//
 // Data is stored in Redis, via the supplied Redis client.
 package cache
 
@@ -46,10 +51,10 @@ var (
 type Fetcher[T any] func(ctx context.Context, key string) (T, error)
 
 type Cache[T any] struct {
-	name   string
-	opts   cacheOptions
-	client redis.Cmdable
-	locker lock.Locker
+	name    string
+	opts    cacheOptions
+	clients []redis.Cmdable
+	locker  lock.Locker
 }
 
 func NewCache[T any](
@@ -59,9 +64,31 @@ func NewCache[T any](
 	options ...Option,
 ) *Cache[T] {
 	c := Cache[T]{
-		name:   name,
-		client: client,
-		locker: lock.Locker{Client: client},
+		name:    name,
+		clients: []redis.Cmdable{client},
+		locker:  lock.Locker{Clients: []redis.Cmdable{client}},
+	}
+
+	c.opts.Fresh = fresh
+	c.opts.Stale = stale
+
+	for _, o := range options {
+		o.apply(&c.opts)
+	}
+
+	return &c
+}
+
+func NewCacheMultipleBackends[T any](
+	clients []redis.Cmdable,
+	name string,
+	fresh, stale time.Duration,
+	options ...Option,
+) *Cache[T] {
+	c := Cache[T]{
+		name:    name,
+		clients: clients,
+		locker:  lock.Locker{Clients: clients},
 	}
 
 	c.opts.Fresh = fresh
@@ -128,17 +155,26 @@ func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
 func (c *Cache[T]) fetch(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
 	keys := c.keysFor(key)
 
-	result, err := c.client.MGet(ctx, keys.fresh, keys.data, keys.negative).Result()
-	if err != nil {
-		return value, err
-	}
-	if len(result) != 3 {
-		return value, fmt.Errorf("incorrect number of values from redis: got %d, expected 3", len(result))
-	}
+	var fresh, data, negative any
+	// return the first positive result
+	for _, client := range c.clients {
+		result, err := client.MGet(ctx, keys.fresh, keys.data, keys.negative).Result()
+		if err != nil {
+			return value, err
+		}
+		if len(result) != 3 {
+			return value, fmt.Errorf("incorrect number of values from redis: got %d, expected 3", len(result))
+		}
 
-	fresh := result[0]
-	data := result[1]
-	negative := result[2]
+		fresh = result[0]
+		data = result[1]
+		negative = result[2]
+
+		if fresh != nil && data != nil {
+			// cache hit
+			break
+		}
+	}
 
 	if negative != nil {
 		// cached non-existence
@@ -218,17 +254,34 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		return err
 	}
 
-	pipe := c.client.TxPipeline()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	l, err := c.acquireIfMultipleRedises(ctx, keys.lockMultiple, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := l.Release(ctx)
+		if err != nil {
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+		}
+	}()
 
-	// Remove any explicit nonexistence sentinel
-	pipe.Del(ctx, keys.negative)
-	// Update cached value
-	pipe.Set(ctx, keys.data, string(data), c.opts.Stale)
-	// Set freshness sentinel
-	pipe.Set(ctx, keys.fresh, 1, c.opts.Fresh)
+	errs := []error{}
+	for _, client := range c.clients {
+		pipe := client.TxPipeline()
 
-	_, err = pipe.Exec(ctx)
-	return err
+		// Remove any explicit nonexistence sentinel
+		pipe.Del(ctx, keys.negative)
+		// Update cached value
+		pipe.Set(ctx, keys.data, string(data), c.opts.Stale)
+		// Set freshness sentinel
+		pipe.Set(ctx, keys.fresh, 1, c.opts.Fresh)
+
+		_, err = pipe.Exec(ctx)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
@@ -240,7 +293,20 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 	keys := c.keysFor(key)
 
 	// Record non-existence sentinel in the cache
-	return c.client.Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+	return c.clients[0].Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+}
+
+type _nullLock struct{}
+
+var nullLock lock.Lock = &_nullLock{}
+
+func (*_nullLock) Release(context.Context) error { return nil }
+
+func (c *Cache[T]) acquireIfMultipleRedises(ctx context.Context, key string, ttl time.Duration) (lock.Lock, error) {
+	if len(c.clients) == 1 {
+		return nullLock, nil
+	}
+	return c.locker.Acquire(ctx, key, ttl)
 }
 
 // refresh attempts to refill the cache in the event of a soft cache miss. We
@@ -285,35 +351,37 @@ func (c *Cache[T]) refreshInner(ctx context.Context, key string, fetcher Fetcher
 	defer func() {
 		err := l.Release(ctx)
 		if err != nil {
-			handleRefreshError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
 		}
 	}()
 
 	value, err := fetcher(ctx, key)
 	if err != nil {
-		handleRefreshError(ctx, fmt.Errorf("error fetching fresh value for cache: %w", err))
+		recordError(ctx, fmt.Errorf("error fetching fresh value for cache: %w", err))
 		return
 	}
 	err = c.set(ctx, key, value)
 	if err != nil {
-		handleRefreshError(ctx, fmt.Errorf("error updating cache: %w", err))
+		recordError(ctx, fmt.Errorf("error updating cache: %w", err))
 		return
 	}
 }
 
 type keys struct {
-	data     string
-	fresh    string
-	lock     string
-	negative string
+	data         string
+	fresh        string
+	lock         string
+	lockMultiple string
+	negative     string
 }
 
 func (c *Cache[T]) keysFor(key string) keys {
 	return keys{
-		data:     fmt.Sprintf("cache:data:%s:%s", c.name, key),
-		fresh:    fmt.Sprintf("cache:fresh:%s:%s", c.name, key),
-		lock:     fmt.Sprintf("cache:lock:%s:%s", c.name, key),
-		negative: fmt.Sprintf("cache:negative:%s:%s", c.name, key),
+		data:         fmt.Sprintf("cache:data:%s:%s", c.name, key),
+		fresh:        fmt.Sprintf("cache:fresh:%s:%s", c.name, key),
+		lock:         fmt.Sprintf("cache:lock:%s:%s", c.name, key),
+		lockMultiple: fmt.Sprintf("cache:lock-multiple:%s:%s", c.name, key),
+		negative:     fmt.Sprintf("cache:negative:%s:%s", c.name, key),
 	}
 }
 
@@ -324,7 +392,7 @@ func (c *Cache[T]) spanAttributes(key string) []attribute.KeyValue {
 	}
 }
 
-func handleRefreshError(ctx context.Context, err error) {
+func recordError(ctx context.Context, err error) {
 	span := trace.SpanFromContext(ctx)
 	span.SetStatus(codes.Error, err.Error())
 	sentry.CaptureException(err)
