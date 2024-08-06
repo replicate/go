@@ -254,6 +254,8 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		return err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	l, err := c.acquireIfMultipleRedises(ctx, keys.lockMultiple, 5*time.Second)
 	if err != nil {
 		return err
@@ -261,7 +263,7 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	defer func() {
 		err := l.Release(ctx)
 		if err != nil {
-			handleRefreshError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
 		}
 	}()
 
@@ -349,18 +351,18 @@ func (c *Cache[T]) refreshInner(ctx context.Context, key string, fetcher Fetcher
 	defer func() {
 		err := l.Release(ctx)
 		if err != nil {
-			handleRefreshError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
 		}
 	}()
 
 	value, err := fetcher(ctx, key)
 	if err != nil {
-		handleRefreshError(ctx, fmt.Errorf("error fetching fresh value for cache: %w", err))
+		recordError(ctx, fmt.Errorf("error fetching fresh value for cache: %w", err))
 		return
 	}
 	err = c.set(ctx, key, value)
 	if err != nil {
-		handleRefreshError(ctx, fmt.Errorf("error updating cache: %w", err))
+		recordError(ctx, fmt.Errorf("error updating cache: %w", err))
 		return
 	}
 }
@@ -390,7 +392,7 @@ func (c *Cache[T]) spanAttributes(key string) []attribute.KeyValue {
 	}
 }
 
-func handleRefreshError(ctx context.Context, err error) {
+func recordError(ctx context.Context, err error) {
 	span := trace.SpanFromContext(ctx)
 	span.SetStatus(codes.Error, err.Error())
 	sentry.CaptureException(err)
