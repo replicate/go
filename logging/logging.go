@@ -45,6 +45,11 @@ func NewConfig() zap.Config {
 		}
 	}
 
+	logFile := os.Getenv("LOG_FILE")
+	if logFile != "" {
+		config.OutputPaths = []string{logFile}
+	}
+
 	return config
 }
 
