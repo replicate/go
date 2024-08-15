@@ -320,7 +320,7 @@ func (c *Cache[T]) refresh(ctx context.Context, key string, fetcher Fetcher[T]) 
 	// We acquire the lock for (at most) the duration for which we're prepared to
 	// serve stale values.
 	l, err := c.locker.TryAcquire(ctx, keys.lock, c.opts.Stale)
-	if err == lock.ErrLockNotAcquired {
+	if errors.Is(err, lock.ErrLockNotAcquired) {
 		return
 	} else if err != nil {
 		// We record other errors but don't do anything to interrupt serving from
