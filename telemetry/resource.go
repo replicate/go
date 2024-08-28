@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/contrib/detectors/gcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/replicate/go/telemetry/detectors/fly"
 	"github.com/replicate/go/version"
