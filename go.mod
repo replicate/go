@@ -9,7 +9,7 @@ require (
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/launchdarkly/go-sdk-common/v3 v3.1.0
-	github.com/launchdarkly/go-server-sdk/v6 v6.2.0
+	github.com/launchdarkly/go-server-sdk/v6 v6.2.1
 	github.com/prometheus/client_golang v1.20.2
 	github.com/redis/go-redis/v9 v9.6.1
 	github.com/segmentio/ksuid v1.0.4
@@ -27,7 +27,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.29.0
 	go.opentelemetry.io/otel/trace v1.29.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/exp v0.0.0-20240707233637-46b078467d37
+	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa
 	golang.org/x/net v0.28.0
 )
 
