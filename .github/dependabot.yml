@@ -13,10 +13,10 @@ updates:
           - "github.com/redis/*"
           - "github.com/go-redis/*"
     reviewers:
-      - "replicate/infra"
+      - "replicate/platform"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
     reviewers:
-    - "replicate/infra"
+    - "replicate/platform"
