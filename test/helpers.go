@@ -21,12 +21,7 @@ func Context(t testing.TB) context.Context {
 func Redis(ctx context.Context, t testing.TB) *redis.Client {
 	t.Helper()
 
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		t.Skip("REDIS_URL is not set")
-	}
-
-	opts, err := redis.ParseURL(redisURL)
+	opts, err := redis.ParseURL(RedisURL(t))
 	if err != nil {
 		t.Fatalf("failed to parse redis url: %v", err)
 	}
@@ -40,6 +35,17 @@ func Redis(ctx context.Context, t testing.TB) *redis.Client {
 	}
 
 	return rdb
+}
+
+func RedisURL(t testing.TB) string {
+	t.Helper()
+
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL is not set")
+	}
+
+	return redisURL
 }
 
 func MiniRedis(t testing.TB) (*miniredis.Miniredis, *redis.Client) {
