@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 var (
 	ErrInvalidReadArgs  = fmt.Errorf("queue: invalid read arguments")
 	ErrInvalidWriteArgs = fmt.Errorf("queue: invalid write arguments")
+
+	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
 )
 
 type Client struct {
@@ -61,7 +64,60 @@ func (c *Client) Read(ctx context.Context, args *ReadArgs) (*Message, error) {
 		return nil, fmt.Errorf("%w: consumer cannot be empty", ErrInvalidReadArgs)
 	}
 
+	if args.PreferStream != "" {
+		return c.readWithPreferredStream(ctx, args)
+	}
 	return c.read(ctx, args)
+}
+
+func (c *Client) readWithPreferredStream(ctx context.Context, args *ReadArgs) (*Message, error) {
+	// First we validate PreferStream. If it makes sense, we'll do an XREADGROUP
+	// against that stream. If it doesn't, we'll start things off with a normal
+	// round-robin read.
+	sid := strings.TrimPrefix(args.PreferStream, args.Name)
+	if ok := streamSuffixPattern.MatchString(sid); !ok {
+		return c.read(ctx, args)
+	}
+
+	// go-redis defines the behavior for the zero value of Block as blocking
+	// indefinitely, which is the opposite of the default behavior of redis
+	// itself. Map 0 to -1 so we get non-blocking behavior if Block is not set.
+	//
+	// See: https://github.com/redis/go-redis/issues/1941
+	block := args.Block
+	if block == 0 {
+		block = -1
+	}
+
+	result, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    args.Group,
+		Consumer: args.Consumer,
+		Streams:  []string{args.PreferStream, ">"},
+		Block:    block,
+		Count:    1,
+	}).Result()
+	switch {
+	case err == redis.Nil:
+		// We try once more with a round-robin read if we got nothing from our start
+		// stream.
+		return c.readOnce(ctx, args)
+	case err != nil:
+		fmt.Printf("got err: %v\n", err)
+		return nil, err
+	}
+
+	msg, err := parseXStreamSlice(result)
+	if err != nil {
+		return nil, err
+	}
+
+	d, err := calculatePickupDelayFromID(msg.ID)
+	if err == nil {
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(pickupDelay(d))
+	}
+
+	return msg, nil
 }
 
 func (c *Client) read(ctx context.Context, args *ReadArgs) (*Message, error) {
@@ -231,6 +287,22 @@ func parse(v any) (*Message, error) {
 		Stream: stream,
 		ID:     id,
 		Values: values,
+	}, nil
+}
+
+func parseXStreamSlice(streams []redis.XStream) (*Message, error) {
+	if len(streams) != 1 {
+		return nil, fmt.Errorf("must have single stream, got %d", len(streams))
+	}
+	stream := streams[0]
+	if len(stream.Messages) != 1 {
+		return nil, fmt.Errorf("must have single message, got %d", len(stream.Messages))
+	}
+	message := stream.Messages[0]
+	return &Message{
+		Stream: stream.Stream,
+		ID:     message.ID,
+		Values: message.Values,
 	}, nil
 }
 

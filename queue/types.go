@@ -24,10 +24,11 @@ type WriteArgs struct {
 }
 
 type ReadArgs struct {
-	Name     string        // queue name
-	Group    string        // consumer group name
-	Consumer string        // consumer ID
-	Block    time.Duration // total blocking time
+	Name         string        // queue name
+	Group        string        // consumer group name
+	Consumer     string        // consumer ID
+	PreferStream string        // if specified, prefer reading from this stream
+	Block        time.Duration // total blocking time
 }
 
 type Message struct {

@@ -132,43 +132,110 @@ func TestClientBlockIntegration(t *testing.T) {
 	}
 }
 
+func messageOrderDefault(queues, messagesPerQueue int) []string {
+	// We expect to read one message from each stream in turn.
+	expected := make([]string, 0, queues*messagesPerQueue)
+	for message := range messagesPerQueue {
+		for queue := range queues {
+			expected = append(expected, fmt.Sprintf("%d-%d", queue, message))
+		}
+	}
+	return expected
+}
+
+func messageOrderPreferredStream(queues, messagesPerQueue int) []string {
+	// We expect to read all messages from queue 0 before moving on to queue 1,
+	// etc.
+	expected := make([]string, 0, queues*messagesPerQueue)
+	for queue := range queues {
+		for message := range messagesPerQueue {
+			expected = append(expected, fmt.Sprintf("%d-%d", queue, message))
+		}
+	}
+	return expected
+}
+
 func TestClientReadIntegration(t *testing.T) {
 	ctx := test.Context(t)
 	rdb := test.Redis(ctx, t)
 
-	ttl := 24 * time.Hour
-	client := queue.NewClient(rdb, ttl)
-	require.NoError(t, client.Prepare(ctx))
-
-	// Prepare a queue with 4 streams
-	require.NoError(t, rdb.HSet(ctx, "myqueue:meta", "streams", 4).Err())
-
-	for i := range 4 {
-		for j := range 10 {
-			require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
-				Stream: fmt.Sprintf("myqueue:s%d", i),
-				Values: map[string]any{
-					"idx": fmt.Sprintf("%d-%d", i, j),
-				},
-			}).Err())
-		}
+	testcases := []struct {
+		Name            string
+		Block           time.Duration
+		TrackLastStream bool
+		ExpectFn        func(queues, messagesPerQueue int) []string
+	}{
+		{
+			Name:     "Default (non-blocking)",
+			ExpectFn: messageOrderDefault,
+		},
+		{
+			Name:     "Default (blocking)",
+			Block:    10 * time.Millisecond,
+			ExpectFn: messageOrderDefault,
+		},
+		{
+			Name:            "PreferStream (non-blocking)",
+			TrackLastStream: true,
+			ExpectFn:        messageOrderPreferredStream,
+		},
+		{
+			Name:            "PreferStream (blocking)",
+			Block:           10 * time.Millisecond,
+			TrackLastStream: true,
+			ExpectFn:        messageOrderPreferredStream,
+		},
 	}
 
-	msgs := make(map[string]struct{})
-	for {
-		msg, err := client.Read(ctx, &queue.ReadArgs{
-			Name:     "myqueue",
-			Group:    "mygroup",
-			Consumer: "mygroup:123",
+	for _, tc := range testcases {
+		t.Run(tc.Name, func(t *testing.T) {
+			queues := 4
+			messagesPerQueue := 10
+			ttl := 24 * time.Hour
+			client := queue.NewClient(rdb, ttl)
+			require.NoError(t, client.Prepare(ctx))
+
+			// Prepare a queue
+			require.NoError(t, rdb.HSet(ctx, "myqueue:meta", "streams", queues).Err())
+
+			for i := range queues {
+				for j := range messagesPerQueue {
+					require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
+						Stream: fmt.Sprintf("myqueue:s%d", i),
+						Values: map[string]any{
+							"idx": fmt.Sprintf("%d-%d", i, j),
+						},
+					}).Err())
+				}
+			}
+
+			var lastStream string
+			msgs := make([]string, 0, queues*messagesPerQueue)
+			for {
+				readArgs := &queue.ReadArgs{
+					Name:     "myqueue",
+					Group:    "mygroup",
+					Consumer: "mygroup:123",
+					Block:    tc.Block,
+				}
+				if tc.TrackLastStream {
+					readArgs.PreferStream = lastStream
+				}
+				msg, err := client.Read(ctx, readArgs)
+				if errors.Is(err, queue.Empty) {
+					break
+				}
+				require.NoError(t, err)
+				lastStream = msg.Stream
+				msgs = append(msgs, msg.Values["idx"].(string))
+			}
+
+			expected := tc.ExpectFn(queues, messagesPerQueue)
+
+			assert.Len(t, msgs, queues*messagesPerQueue)
+			assert.EqualValues(t, expected, msgs)
 		})
-		if errors.Is(err, queue.Empty) {
-			break
-		}
-		require.NoError(t, err)
-		msgs[msg.Values["idx"].(string)] = struct{}{}
 	}
-
-	assert.Len(t, msgs, 40)
 }
 
 func TestClientReadLegacyStreamIntegration(t *testing.T) {
