@@ -1,6 +1,8 @@
 package flags
 
 import (
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
@@ -13,6 +15,8 @@ var currentClient *ld.LDClient
 var logger = logging.New("flags")
 
 var overrides = make(map[string]bool)
+
+var emittedWarnings = sync.Map{}
 
 type BlueYellowResult string
 
@@ -136,7 +140,11 @@ func lookupDefault(context *ldcontext.Context, name string, defaultVal bool) boo
 	// misconfigured the client).
 	result, err := currentClient.BoolVariation(name, *context, defaultVal)
 	if err != nil {
-		log.Warnf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
+		w := fmt.Sprintf("Failed to fetch value for flag '%s' (returning default %v to caller): %v", name, defaultVal, err)
+		// Emit the warning once per message.
+		if _, loaded := emittedWarnings.LoadOrStore(w, true); !loaded {
+			log.Warn(w)
+		}
 	}
 	return result
 }
