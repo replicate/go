@@ -14,7 +14,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/speps/go-hashids/v2 v2.0.1
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	go.opentelemetry.io/contrib/detectors/gcp v1.32.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.57.0
 	go.opentelemetry.io/otel v1.32.0
