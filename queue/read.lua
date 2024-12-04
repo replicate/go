@@ -25,30 +25,13 @@ local key_meta = base .. ':meta'
 -- How many streams are available to read?
 local streams = tonumber(redis.call('HGET', key_meta, 'streams') or 1)
 
--- LEGACY: Check if a stream exists at the old name. If it does, it will be
--- checked alongside all other streams.
---
--- This can be removed once everything is writing to new stream names.
-local check_default_stream = redis.call('XLEN', base) > 0
-
 -- Loop over streams to find a message
 local function hasprefix(str, prefix)
    return string.sub(str, 1, string.len(prefix)) == prefix
 end
 
 local function checkstream (stream)
-  local grp
-  -- TODO: Remove this once we've migrated to using the new group everywhere.
-  -- This allows us to stop using the stream name as the consumer group name,
-  -- because new streams (`:sN`) will use the provided group name, while the old
-  -- stream will just use its own name as the group, which is the current
-  -- behavior.
-  if stream == base then
-    grp = base
-  else
-    grp = group
-  end
-  local reply = redis.pcall('XREADGROUP', 'GROUP', grp, consumer, 'COUNT', 1, 'STREAMS', stream, '>')
+  local reply = redis.pcall('XREADGROUP', 'GROUP', group, consumer, 'COUNT', 1, 'STREAMS', stream, '>')
   -- false means a null reply from XREADGROUP, which means the stream is empty
   if not reply then
     return reply
@@ -59,10 +42,10 @@ local function checkstream (stream)
   end
 
   if hasprefix(reply['err'], 'NOGROUP No such key') then
-    redis.call('XGROUP', 'CREATE', stream, grp, '0', 'MKSTREAM')
+    redis.call('XGROUP', 'CREATE', stream, group, '0', 'MKSTREAM')
     redis.call('EXPIRE', stream, ttl)
     -- and try again, just once
-    return redis.pcall('XREADGROUP', 'GROUP', grp, consumer, 'COUNT', 1, 'STREAMS', stream, '>')
+    return redis.pcall('XREADGROUP', 'GROUP', group, consumer, 'COUNT', 1, 'STREAMS', stream, '>')
   end
 
   return reply
@@ -76,18 +59,8 @@ end
 -- is appropriately wrapped before using it.
 local offset = tonumber(redis.call('HGET', key_meta, 'offset') or 0)
 
-for idx = 0, streams do
+for idx = 0, streams-1 do
   local streamid = (offset + idx) % streams
-
-  -- LEGACY: for now, if we're checking stream 0, also check the default stream.
-  if streamid == 0 and check_default_stream then
-    local reply = checkstream(base)
-    if reply then
-      redis.call('HSET', key_meta, 'offset', (offset + idx + 1) % streams)
-      redis.call('EXPIRE', key_meta, ttl)
-      return reply
-    end
-  end
 
   local reply = checkstream(base .. ':s' .. streamid)
   if reply then

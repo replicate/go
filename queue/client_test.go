@@ -238,59 +238,6 @@ func TestClientReadIntegration(t *testing.T) {
 	}
 }
 
-func TestClientReadLegacyStreamIntegration(t *testing.T) {
-	ctx := test.Context(t)
-	rdb := test.Redis(ctx, t)
-
-	ttl := 24 * time.Hour
-	client := queue.NewClient(rdb, ttl)
-	require.NoError(t, client.Prepare(ctx))
-
-	// Prepare a queue with 4 streams
-	require.NoError(t, rdb.HSet(ctx, "myqueue:meta", "streams", 4).Err())
-
-	// But also populate the default stream
-	for i := range 10 {
-		require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
-			Stream: "myqueue",
-			Values: map[string]any{
-				"idx": fmt.Sprintf("default-%d", i),
-			},
-		}).Err())
-	}
-
-	for i := range 4 {
-		for j := range 10 {
-			require.NoError(t, rdb.XAdd(ctx, &redis.XAddArgs{
-				Stream: fmt.Sprintf("myqueue:s%d", i),
-				Values: map[string]any{
-					"idx": fmt.Sprintf("%d-%d", i, j),
-				},
-			}).Err())
-		}
-	}
-
-	msgs := make(map[string]struct{})
-	for {
-		msg, err := client.Read(ctx, &queue.ReadArgs{
-			Name:     "myqueue",
-			Group:    "mygroup",
-			Consumer: "mygroup:123",
-		})
-		if errors.Is(err, queue.Empty) {
-			break
-		}
-		require.NoError(t, err)
-		msgs[msg.Values["idx"].(string)] = struct{}{}
-	}
-
-	ttl, err := rdb.TTL(ctx, "myqueue:meta").Result()
-	require.NoError(t, err)
-	assert.Greater(t, ttl, 23*time.Hour)
-
-	assert.Len(t, msgs, 50)
-}
-
 func TestClientWriteIntegration(t *testing.T) {
 	ctx := test.Context(t)
 	rdb := test.Redis(ctx, t)

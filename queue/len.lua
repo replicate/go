@@ -15,11 +15,7 @@ local key_meta = base .. ':meta'
 local streams = tonumber(redis.call('HGET', key_meta, 'streams') or 1)
 local result = 0
 
--- LEGACY: Include the base stream. This can be removed once everything is using
--- new stream names.
-result = result + redis.call('XLEN', base)
-
-for idx = 0, streams do
+for idx = 0, streams-1 do
   result = result + redis.call('XLEN', base .. ':s' .. idx)
 end
 
