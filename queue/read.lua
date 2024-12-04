@@ -76,7 +76,7 @@ end
 -- is appropriately wrapped before using it.
 local offset = tonumber(redis.call('HGET', key_meta, 'offset') or 0)
 
-for idx = 0, streams do
+for idx = 0, streams-1 do
   local streamid = (offset + idx) % streams
 
   -- LEGACY: for now, if we're checking stream 0, also check the default stream.

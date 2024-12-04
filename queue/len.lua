@@ -19,7 +19,7 @@ local result = 0
 -- new stream names.
 result = result + redis.call('XLEN', base)
 
-for idx = 0, streams do
+for idx = 0, streams-1 do
   result = result + redis.call('XLEN', base .. ':s' .. idx)
 end
 
