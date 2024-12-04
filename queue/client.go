@@ -43,6 +43,18 @@ func (c *Client) Len(ctx context.Context, name string) (int64, error) {
 	return lenScript.RunRO(ctx, c.rdb, []string{name}).Int64()
 }
 
+// Lag calculates the aggregate lag (that is, number of messages that have not
+// yet been read) of the consumer group for the given queue. It adds up the
+// consumer group's lag of all the streams in the queue, based on the value
+// reported by XINFO GROUPS for the stream.  If any of the streams report a
+// `nil` lag, Lag returns an error.
+//
+// As a side effect, Lag creates the consumer group if it does not already
+// exist.
+func (c *Client) Lag(ctx context.Context, queue string, group string) (int64, error) {
+	return lagScript.Run(ctx, c.rdb, []string{queue}, group).Int64()
+}
+
 // Read a single message from the queue. If the Block field of args is
 // non-zero, the call may block for up to that duration waiting for a new
 // message.

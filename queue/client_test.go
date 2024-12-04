@@ -66,7 +66,11 @@ func TestClientIntegration(t *testing.T) {
 
 	ids := make(map[string]struct{})
 
-	for range 15 {
+	for i := range 15 {
+		lag, err := client.Lag(ctx, "test", "mygroup")
+		require.NoError(t, err)
+		assert.EqualValues(t, 15-i, lag)
+
 		msg, err := client.Read(ctx, &queue.ReadArgs{
 			Name:     "test",
 			Group:    "mygroup",
@@ -88,7 +92,18 @@ func TestClientIntegration(t *testing.T) {
 		Group:    "mygroup",
 		Consumer: "mygroup:123",
 	})
+
 	require.ErrorIs(t, err, queue.Empty)
+
+	// Len remains 15 (because we haven't XDELed the messages or XTRIMed the stream)
+	length, err = client.Len(ctx, "test")
+	require.NoError(t, err)
+	assert.EqualValues(t, 15, length)
+
+	// But Lag is now 0 (because we've XREADGROUPed everything)
+	lag, err := client.Lag(ctx, "test", "mygroup")
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, lag)
 }
 
 // Check that the Block option works as expected

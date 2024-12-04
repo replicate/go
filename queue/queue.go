@@ -44,6 +44,10 @@ var (
 	lenCmd    string
 	lenScript = redis.NewScript(lenCmd)
 
+	//go:embed lag.lua
+	lagCmd    string
+	lagScript = redis.NewScript(lagCmd)
+
 	//go:embed read.lua
 	readCmd    string
 	readScript = redis.NewScript(readCmd)
@@ -55,6 +59,9 @@ var (
 
 func prepare(ctx context.Context, rdb redis.Cmdable) error {
 	if err := lenScript.Load(ctx, rdb).Err(); err != nil {
+		return err
+	}
+	if err := lagScript.Load(ctx, rdb).Err(); err != nil {
 		return err
 	}
 	if err := readScript.Load(ctx, rdb).Err(); err != nil {
