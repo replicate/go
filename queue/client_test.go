@@ -67,10 +67,6 @@ func TestClientIntegration(t *testing.T) {
 	ids := make(map[string]struct{})
 
 	for i := range 15 {
-		lag, err := client.Lag(ctx, "test", "mygroup")
-		require.NoError(t, err)
-		assert.EqualValues(t, 15-i, lag)
-
 		msg, err := client.Read(ctx, &queue.ReadArgs{
 			Name:     "test",
 			Group:    "mygroup",
@@ -81,6 +77,10 @@ func TestClientIntegration(t *testing.T) {
 		assert.Contains(t, msg.Values, "type")
 		assert.Contains(t, msg.Values, "id")
 		ids[msg.Values["id"].(string)] = struct{}{}
+
+		pendingCount, err := client.PendingCount(ctx, "test", "mygroup")
+		require.NoError(t, err)
+		assert.EqualValues(t, i+1, pendingCount)
 	}
 
 	// We should have read all the messages we enqueued
@@ -99,11 +99,6 @@ func TestClientIntegration(t *testing.T) {
 	length, err = client.Len(ctx, "test")
 	require.NoError(t, err)
 	assert.EqualValues(t, 15, length)
-
-	// But Lag is now 0 (because we've XREADGROUPed everything)
-	lag, err := client.Lag(ctx, "test", "mygroup")
-	require.NoError(t, err)
-	assert.EqualValues(t, 0, lag)
 }
 
 // Check that the Block option works as expected
