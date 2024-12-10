@@ -24,6 +24,13 @@ type Client struct {
 	ttl time.Duration // ttl for all keys in queue
 }
 
+type Stats struct {
+	// Len is the aggregate length of the queue, as reported by XLEN
+	Len int64
+	// PendingCount is the aggregate count of pending entries, as reported by XPENDING
+	PendingCount int64
+}
+
 func NewClient(rdb redis.Cmdable, ttl time.Duration) *Client {
 	return &Client{
 		rdb: rdb,
@@ -43,11 +50,13 @@ func (c *Client) Len(ctx context.Context, name string) (int64, error) {
 	return lenScript.RunRO(ctx, c.rdb, []string{name}).Int64()
 }
 
-// PendingCount counts the aggregate pending entries (that is, number of
-// messages that have been read but not acknowledged) of the consumer group for
-// the given queue, as reported by XPENDING.
-func (c *Client) PendingCount(ctx context.Context, queue string, group string) (int64, error) {
-	return pendingCountScript.RunRO(ctx, c.rdb, []string{queue}, group).Int64()
+// Stats calculates aggregate statistics about the queue and consumer group.
+func (c *Client) Stats(ctx context.Context, queue string, group string) (Stats, error) {
+	out, err := statsScript.RunRO(ctx, c.rdb, []string{queue}, group).Int64Slice()
+	if err != nil {
+		return Stats{}, err
+	}
+	return Stats{Len: out[0], PendingCount: out[1]}, nil
 }
 
 // Read a single message from the queue. If the Block field of args is

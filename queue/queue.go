@@ -48,6 +48,10 @@ var (
 	pendingCountCmd    string
 	pendingCountScript = redis.NewScript(pendingCountCmd)
 
+	//go:embed stats.lua
+	statsCmd    string
+	statsScript = redis.NewScript(statsCmd)
+
 	//go:embed read.lua
 	readCmd    string
 	readScript = redis.NewScript(readCmd)
@@ -62,6 +66,9 @@ func prepare(ctx context.Context, rdb redis.Cmdable) error {
 		return err
 	}
 	if err := pendingCountScript.Load(ctx, rdb).Err(); err != nil {
+		return err
+	}
+	if err := statsScript.Load(ctx, rdb).Err(); err != nil {
 		return err
 	}
 	if err := readScript.Load(ctx, rdb).Err(); err != nil {
