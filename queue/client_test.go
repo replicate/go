@@ -78,9 +78,10 @@ func TestClientIntegration(t *testing.T) {
 		assert.Contains(t, msg.Values, "id")
 		ids[msg.Values["id"].(string)] = struct{}{}
 
-		pendingCount, err := client.PendingCount(ctx, "test", "mygroup")
+		stats, err := client.Stats(ctx, "test", "mygroup")
 		require.NoError(t, err)
-		assert.EqualValues(t, i+1, pendingCount)
+		assert.EqualValues(t, i+1, stats.PendingCount)
+		assert.EqualValues(t, 15, stats.Len)
 	}
 
 	// We should have read all the messages we enqueued
