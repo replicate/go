@@ -66,6 +66,7 @@ func TestClientIntegration(t *testing.T) {
 
 	ids := make(map[string]struct{})
 
+	// Read 10 of the 15 messages, so we can test that the rest are still there
 	for i := range 15 {
 		msg, err := client.Read(ctx, &queue.ReadArgs{
 			Name:     "test",
@@ -96,10 +97,30 @@ func TestClientIntegration(t *testing.T) {
 
 	require.ErrorIs(t, err, queue.Empty)
 
-	// Len remains 15 (because we haven't XDELed the messages or XTRIMed the stream)
+	// Len is zero (because messages are claimed/pending)
 	length, err = client.Len(ctx, "test")
 	require.NoError(t, err)
-	assert.EqualValues(t, 15, length)
+	assert.EqualValues(t, 0, length)
+
+	// Add more elements to the queue
+	for range 5 {
+		_, err := client.Write(ctx, &queue.WriteArgs{
+			Name:            "test",
+			Streams:         16,
+			StreamsPerShard: 2,
+			ShardKey:        []byte("tuna"),
+			Values: map[string]any{
+				"type": "fish",
+				"id":   id,
+			},
+		})
+		require.NoError(t, err)
+		id++
+	}
+	// Len is 5 as we have added more to the queue
+	length, err = client.Len(ctx, "test")
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, length)
 }
 
 // Check that the Block option works as expected
