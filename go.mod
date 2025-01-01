@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/alicebob/miniredis/v2 v2.33.0
-	github.com/getsentry/sentry-go v0.29.1
+	github.com/getsentry/sentry-go v0.30.0
 	github.com/go-logr/logr v1.4.2
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
