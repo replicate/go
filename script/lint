@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 cd ..
 
 if [ "$GITHUB_ACTIONS" = "true" ]; then
-  set -- "$@" --out-format=github-actions
+  set -- "$@" --out-format=colored-line-number
 fi
 
 go generate ./...
@@ -17,4 +17,4 @@ if ! git diff --exit-code >/dev/null; then
   exit 1
 fi
 
-exec go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.57.2 run "$@"
+exec go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.63.4 run "$@"
