@@ -1,7 +1,7 @@
 [linters]
 # This is a list of linters we enable beyond the default set.
 enable = [
-  "exportloopref",
+  "copyloopvar",
   "gocritic",
   "goimports",
   "revive",
