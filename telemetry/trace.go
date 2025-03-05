@@ -56,8 +56,10 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 		return nil, fmt.Errorf("failed to initialize trace exporter: %w", err)
 	}
 
+	wrappedExp := &UTF8ErrorCatchingExporter{next: exp}
+
 	var sp sdktrace.SpanProcessor
-	sp = sdktrace.NewBatchSpanProcessor(exp)
+	sp = sdktrace.NewBatchSpanProcessor(wrappedExp)
 	sp = &DroppedDataProcessor{Next: sp} // this should remain next-to-last in the chain
 	sp = &TraceOptionsProcessor{Next: sp}
 
