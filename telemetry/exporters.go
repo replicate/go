@@ -49,6 +49,8 @@ func (u *UTF8ErrorCatchingExporter) ExportSpans(ctx context.Context, spans []tra
 		spanJSON, marshalErr := json.Marshal(spanData)
 		if marshalErr != nil {
 			log.Errorw("Error marshalling span data", "error", marshalErr)
+			sentry.CaptureException(marshalErr)
+			return marshalErr
 		}
 		// Send to Sentry
 		sentry.CaptureMessage(string(spanJSON))
