@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
@@ -48,7 +49,8 @@ func (u *UTF8ErrorCatchingExporter) ExportSpans(ctx context.Context, spans []tra
 		log.Errorw("Span data", "span", spanData)
 		spanJSON, marshalErr := json.Marshal(spanData)
 		if marshalErr != nil {
-			log.Errorw("Error marshalling span data", "error", marshalErr)
+			marshalErr = fmt.Errorf("failed to marshal span data on invalid utf-8 span export error capture: %w", marshalErr)
+			log.Errorw("unable to marshal span data", "error", marshalErr)
 			sentry.CaptureException(marshalErr)
 			return marshalErr
 		}
