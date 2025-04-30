@@ -360,23 +360,26 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 
 	// Shadow write if configured
 	if c.opts.ShadowWriteClient != nil {
-		shadowCtx, shadowSpan := tracer.Start(
-			ctx,
-			"cache.shadow_write",
-			trace.WithAttributes(c.spanAttributes(key)...),
-			trace.WithAttributes(attribute.String("cache.operation", "setNegative")),
-		)
-		defer shadowSpan.End()
+		// Fire-and-forget shadow write
+		go func() {
+			shadowCtx, shadowSpan := tracer.Start(
+				context.Background(),
+				"cache.shadow_write",
+				trace.WithAttributes(c.spanAttributes(key)...),
+				trace.WithAttributes(attribute.String("cache.operation", "setNegative")),
+			)
+			defer shadowSpan.End()
 
-		log.Debugw("performing shadow negative write", "key", key)
+			log.Debugw("performing shadow negative write", "key", key)
 
-		shadowErr := c.opts.ShadowWriteClient.Set(shadowCtx, keys.negative, 1, c.opts.Negative).Err()
-		if shadowErr != nil {
-			shadowSpan.SetStatus(codes.Error, shadowErr.Error())
-			log.Warnw("shadow negative write failed",
-				"key", key,
-				"error", shadowErr)
-		}
+			shadowErr := c.opts.ShadowWriteClient.Set(shadowCtx, keys.negative, 1, c.opts.Negative).Err()
+			if shadowErr != nil {
+				shadowSpan.SetStatus(codes.Error, shadowErr.Error())
+				log.Warnw("shadow negative write failed",
+					"key", key,
+					"error", shadowErr)
+			}
+		}()
 	}
 
 	return err

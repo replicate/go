@@ -115,6 +115,33 @@ func (m mockWrapper) ExpectCacheFillNegative(key string) {
 	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
 }
 
+// Helper function for polling mock expectations
+func assertEventually(t *testing.T, condition func() error, msgAndArgs ...interface{}) {
+	t.Helper()
+	timeout := 100 * time.Millisecond // Adjust timeout as needed
+	interval := 5 * time.Millisecond  // Adjust interval as needed
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		select {
+		case <-timer.C:
+			assert.Fail(t, fmt.Sprintf("Condition not met within %v. Last error: %v", timeout, lastErr), msgAndArgs...)
+			return
+		case <-ticker.C:
+			lastErr = condition()
+			if lastErr == nil {
+				return // Condition met
+			}
+		}
+	}
+}
+
 func TestCacheFetchesWhenNotInCache(t *testing.T) {
 	ctx := context.Background()
 
@@ -536,8 +563,9 @@ func TestCacheWithShadowWriteClient(t *testing.T) {
 		stale:      stale,
 	}
 
-	// Shadow write client
+	// Shadow write client - allow out of order expectations for async operations
 	shadowClient, shadowMock := redismock.NewClientMock()
+	shadowMock.MatchExpectationsInOrder(false)
 
 	// Create cache with shadow write client
 	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient))
@@ -562,7 +590,9 @@ func TestCacheWithShadowWriteClient(t *testing.T) {
 	assert.NotNil(t, v)
 	assert.Equal(t, "value_for:elephant", v.Value)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
-	assert.NoError(t, shadowMock.ExpectationsWereMet())
+
+	// Poll shadow mock expectations instead of sleeping
+	assertEventually(t, shadowMock.ExpectationsWereMet, "shadow mock expectations not met for Get")
 }
 
 func TestCacheWithShadowWriteClientDirectSet(t *testing.T) {
@@ -580,8 +610,9 @@ func TestCacheWithShadowWriteClientDirectSet(t *testing.T) {
 		stale:      stale,
 	}
 
-	// Shadow write client
+	// Shadow write client - allow out of order expectations for async operations
 	shadowClient, shadowMock := redismock.NewClientMock()
+	shadowMock.MatchExpectationsInOrder(false)
 
 	// Create cache with shadow write client
 	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient))
@@ -603,7 +634,9 @@ func TestCacheWithShadowWriteClientDirectSet(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
-	assert.NoError(t, shadowMock.ExpectationsWereMet())
+
+	// Poll shadow mock expectations instead of sleeping
+	assertEventually(t, shadowMock.ExpectationsWereMet, "shadow mock expectations not met for Set")
 }
 
 func TestCacheWithShadowWriteClientNegative(t *testing.T) {
@@ -623,8 +656,9 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 		negative:   negative,
 	}
 
-	// Shadow write client
+	// Shadow write client - allow out of order expectations for async operations
 	shadowClient, shadowMock := redismock.NewClientMock()
+	shadowMock.MatchExpectationsInOrder(false)
 
 	// Create cache with shadow write client and negative caching
 	cache := NewCache[testObj](client, "objects", fresh, stale,
@@ -645,7 +679,9 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 
 	assert.ErrorIs(t, err, ErrDoesNotExist)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
-	assert.NoError(t, shadowMock.ExpectationsWereMet())
+
+	// Poll shadow mock expectations instead of sleeping
+	assertEventually(t, shadowMock.ExpectationsWereMet, "shadow mock expectations not met for negative cache Get")
 }
 
 func TestCacheMultipleBackendsWithShadowWriteClient(t *testing.T) {
@@ -671,8 +707,9 @@ func TestCacheMultipleBackendsWithShadowWriteClient(t *testing.T) {
 		stale:      stale,
 	}
 
-	// Shadow write client
+	// Shadow write client - allow out of order expectations for async operations
 	shadowClient, shadowMock := redismock.NewClientMock()
+	shadowMock.MatchExpectationsInOrder(false)
 
 	// Create cache with shadow write client
 	cache := NewCacheMultipleBackends[testObj](
@@ -701,7 +738,9 @@ func TestCacheMultipleBackendsWithShadowWriteClient(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, cacheMock1.ExpectationsWereMet())
 	assert.NoError(t, cacheMock2.ExpectationsWereMet())
-	assert.NoError(t, shadowMock.ExpectationsWereMet())
+
+	// Poll shadow mock expectations instead of sleeping
+	assertEventually(t, shadowMock.ExpectationsWereMet, "shadow mock expectations not met for multiple backend Set")
 }
 
 func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
@@ -721,8 +760,15 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 		negative:   negative,
 	}
 
-	// Shadow write client that fails
-	shadowClient, shadowMock := redismock.NewClientMock()
+	// Shadow write client that fails - we don't use expectations on it in this test
+	shadowClient, _ := redismock.NewClientMock()
+
+	// Set all the primary client's expectations upfront to avoid races
+	cacheMock.ExpectCacheFill("elephant", testObj{Value: "shadow_failure_test"})
+	cacheMock.ExpectCacheFetchEmpty("elephant_get")
+	cacheMock.ExpectCacheFill("elephant_get", testObj{Value: "value_for:elephant_get"})
+	cacheMock.ExpectCacheFetchEmpty("missing")
+	cacheMock.ExpectCacheFillNegative("missing")
 
 	// Create cache with shadow write client
 	cache := NewCache[testObj](client, "objects", fresh, stale,
@@ -732,50 +778,26 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 	// Test 1: Direct set succeeds despite shadow client failure
 	obj := testObj{Value: "shadow_failure_test"}
 
-	// Primary client works normally
-	cacheMock.ExpectCacheFill("elephant", obj)
-
-	// Shadow client fails
-	shadowMock.ExpectTxPipeline()
-	shadowMock.ExpectDel("cache:negative:objects:elephant").SetErr(errors.New("shadow client failure"))
-	shadowMock.ExpectTxPipelineExec().SetErr(errors.New("shadow pipeline failure"))
-
 	// Set should still succeed because shadow writes are fire-and-forget
 	err := cache.Set(ctx, "elephant", obj)
 	assert.NoError(t, err)
 
 	// Test 2: Get succeeds and updates cache despite shadow client failure during fill
-	getObj := testObj{Value: "value_for:elephant_get"}
-
-	// Primary client works normally for a cache miss and fill
-	cacheMock.ExpectCacheFetchEmpty("elephant_get")
-	cacheMock.ExpectCacheFill("elephant_get", getObj)
-
-	// Shadow client fails during the async fill operation
-	shadowMock.ExpectTxPipeline()
-	shadowMock.ExpectDel("cache:negative:objects:elephant_get").SetErr(errors.New("shadow client failure on get"))
-	shadowMock.ExpectTxPipelineExec().SetErr(errors.New("shadow pipeline failure on get"))
-
 	// Get should succeed despite shadow client errors
 	v, err := cache.Get(ctx, "elephant_get", fetchTestObj)
 	assert.NoError(t, err)
 	assert.Equal(t, "value_for:elephant_get", v.Value)
 
 	// Test 3: Negative caching works even if shadow client fails
-	cacheMock.ExpectCacheFetchEmpty("missing")
-	cacheMock.ExpectCacheFillNegative("missing")
-
-	// Shadow client fails on negative caching
-	shadowMock.ExpectSet("cache:negative:objects:missing", 1, negative).SetErr(errors.New("shadow negative caching failure"))
-
 	// Get with DoesNotExist should still succeed in setting negative cache
 	_, err = cache.Get(ctx, "missing", func(_ context.Context, _ string) (t testObj, err error) {
 		return t, fmt.Errorf("not found: %w", ErrDoesNotExist)
 	})
+
 	assert.ErrorIs(t, err, ErrDoesNotExist)
 
 	// All operations on primary cache should have completed successfully
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
 
-	// We don't check shadowMock expectations because we're creating failures intentionally
+	// We don't check shadow expectations since we're intentionally making the shadow client fail
 }
