@@ -149,6 +149,40 @@ func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
 	return c.set(ctx, key, value)
 }
 
+// Delete deletes the value stored in a given key. This is primarily intended for cache-busting use cases.
+func (c *Cache[T]) Delete(ctx context.Context, key string) error {
+	keys := c.keysFor(key)
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	l, err := c.acquireIfMultipleRedises(ctx, keys.lockMultiple, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := l.Release(ctx)
+		if err != nil {
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+		}
+	}()
+
+	errs := []error{}
+	for _, client := range c.clients {
+		pipe := client.TxPipeline()
+
+		// Remove any explicit nonexistence sentinel
+		pipe.Del(ctx, keys.negative)
+		// Remove cached value
+		pipe.Del(ctx, keys.data)
+		// Remove freshness sentinel
+		pipe.Del(ctx, keys.fresh)
+
+		_, err = pipe.Exec(ctx)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
 // fetch attempts to retrieve the value from cache. In the event of a hard cache
 // miss it returns errCacheMiss, and for a soft miss it starts a goroutine to
 // refill the cache.
