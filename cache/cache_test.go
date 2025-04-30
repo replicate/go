@@ -80,6 +80,14 @@ func (m mockWrapper) ExpectCacheFill(key string, value any) {
 	m.ExpectTxPipelineExec()
 }
 
+func (m mockWrapper) ExpectCacheDelete(key string) {
+	m.ExpectTxPipeline()
+	m.ExpectDel("cache:negative:" + m.name + ":" + key).SetVal(0)
+	m.ExpectDel("cache:data:" + m.name + ":" + key).SetVal(0)
+	m.ExpectDel("cache:fresh:" + m.name + ":" + key).SetVal(0)
+	m.ExpectTxPipelineExec()
+}
+
 func (m mockWrapper) ExpectCacheFillWithLock(key string, value any) {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -384,6 +392,30 @@ func TestCacheSet(t *testing.T) {
 	cacheMock.ExpectCacheFill("elephant", obj)
 
 	err := cache.Set(ctx, "elephant", obj)
+
+	assert.NoError(t, err)
+	assert.NoError(t, cacheMock.ExpectationsWereMet())
+}
+
+func TestCacheDelete(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := 10 * time.Second
+	stale := 30 * time.Second
+
+	client, mock := redismock.NewClientMock()
+	cacheMock := mockWrapper{
+		ClientMock: mock,
+
+		name:  "objects",
+		fresh: fresh,
+		stale: stale,
+	}
+	cache := NewCache[testObj](client, "objects", fresh, stale)
+
+	cacheMock.ExpectCacheDelete("elephant")
+
+	err := cache.Delete(ctx, "elephant")
 
 	assert.NoError(t, err)
 	assert.NoError(t, cacheMock.ExpectationsWereMet())
