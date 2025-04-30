@@ -281,6 +281,7 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		return ErrDisallowedCacheValue
 	}
 
+	log := logger.With(logging.GetFields(ctx)...).Sugar()
 	keys := c.keysFor(key)
 
 	data, err := json.Marshal(value)
@@ -301,20 +302,47 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 		}
 	}()
 
+	// Helper function to populate a pipeline with the required operations
+	populatePipeline := func(pipe redis.Pipeliner, opCtx context.Context) {
+		// Remove any explicit nonexistence sentinel
+		pipe.Del(opCtx, keys.negative)
+		// Update cached value
+		pipe.Set(opCtx, keys.data, string(data), c.opts.Stale)
+		// Set freshness sentinel
+		pipe.Set(opCtx, keys.fresh, 1, c.opts.Fresh)
+	}
+
+	// Set in primary clients
 	errs := []error{}
 	for _, client := range c.clients {
 		pipe := client.TxPipeline()
-
-		// Remove any explicit nonexistence sentinel
-		pipe.Del(ctx, keys.negative)
-		// Update cached value
-		pipe.Set(ctx, keys.data, string(data), c.opts.Stale)
-		// Set freshness sentinel
-		pipe.Set(ctx, keys.fresh, 1, c.opts.Fresh)
-
+		populatePipeline(pipe, ctx)
 		_, err = pipe.Exec(ctx)
 		errs = append(errs, err)
 	}
+
+	// Shadow write if configured
+	if c.opts.ShadowWriteClient != nil {
+		// Fire-and-forget shadow write
+		go func() {
+			shadowCtx, shadowSpan := tracer.Start(
+				context.Background(),
+				"cache.shadow_write",
+				trace.WithAttributes(c.spanAttributes(key)...),
+				trace.WithAttributes(attribute.String("cache.operation", "set")),
+			)
+			defer shadowSpan.End()
+
+			log.Debugw("performing shadow write", "key", key)
+			pipe := c.opts.ShadowWriteClient.TxPipeline()
+			populatePipeline(pipe, shadowCtx)
+			if _, shadowErr := pipe.Exec(shadowCtx); shadowErr != nil {
+				shadowSpan.SetStatus(codes.Error, shadowErr.Error())
+				log.Warnw("shadow write failed", "key", key, "error", shadowErr, "operation", "set")
+			}
+		}()
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -324,10 +352,34 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 		return nil
 	}
 
+	log := logger.With(logging.GetFields(ctx)...).Sugar()
 	keys := c.keysFor(key)
 
 	// Record non-existence sentinel in the cache
-	return c.clients[0].Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+	err := c.clients[0].Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+
+	// Shadow write if configured
+	if c.opts.ShadowWriteClient != nil {
+		shadowCtx, shadowSpan := tracer.Start(
+			ctx,
+			"cache.shadow_write",
+			trace.WithAttributes(c.spanAttributes(key)...),
+			trace.WithAttributes(attribute.String("cache.operation", "setNegative")),
+		)
+		defer shadowSpan.End()
+
+		log.Debugw("performing shadow negative write", "key", key)
+
+		shadowErr := c.opts.ShadowWriteClient.Set(shadowCtx, keys.negative, 1, c.opts.Negative).Err()
+		if shadowErr != nil {
+			shadowSpan.SetStatus(codes.Error, shadowErr.Error())
+			log.Warnw("shadow negative write failed",
+				"key", key,
+				"error", shadowErr)
+		}
+	}
+
+	return err
 }
 
 type _nullLock struct{}
