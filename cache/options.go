@@ -32,8 +32,8 @@ func WithNegativeCaching(duration time.Duration) Option {
 }
 
 // WithShadowWrite configures the cache to use a separate Redis client for
-// shadow writes. This is useful for writing to a different Redis instance
-// than the one used for reading. This is useful for write-through caching
+// shadow writes. This is useful for writing an additional copy of data to a
+// different Redis instance than the primary instance used for caching.
 func WithShadowWriteClient(client redis.Cmdable) Option {
 	return optionFunc(func(opts *cacheOptions) {
 		opts.ShadowWriteClient = client
