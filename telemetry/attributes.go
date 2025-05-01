@@ -71,6 +71,7 @@ func getValue(value any) (attribute.Value, error) {
 		if asInt64, err := v.Int64(); err == nil {
 			return attribute.Int64Value(asInt64), nil
 		}
+		//nolint:revive
 		if asFloat64, err := v.Float64(); err == nil {
 			return attribute.Float64Value(asFloat64), nil
 		} else {
