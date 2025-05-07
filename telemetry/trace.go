@@ -41,7 +41,7 @@ func WithTraceContext(ctx context.Context, carrier propagation.TextMapCarrier) c
 }
 
 func configureTracerProvider() {
-	tp, err := createTracerProvider(context.Background())
+	tp, err := CreateTracerProvider(context.Background())
 	if err != nil {
 		logger.Warn("failed to create tracer provider", zap.Error(err))
 		return
@@ -50,7 +50,7 @@ func configureTracerProvider() {
 	otel.SetTracerProvider(tp)
 }
 
-func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
+func CreateTracerProvider(ctx context.Context, opts ...sdktrace.TracerProviderOption) (*sdktrace.TracerProvider, error) {
 	exp, err := otlptrace.New(ctx, otlptracehttp.NewClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize trace exporter: %w", err)
@@ -63,9 +63,11 @@ func createTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error)
 	sp = &DroppedDataProcessor{Next: sp} // this should remain next-to-last in the chain
 	sp = &TraceOptionsProcessor{Next: sp}
 
-	tp := sdktrace.NewTracerProvider(
+	opts = append(
+		opts,
 		sdktrace.WithSpanProcessor(sp),
 		sdktrace.WithResource(DefaultResource()),
 	)
+	tp := sdktrace.NewTracerProvider(opts...)
 	return tp, nil
 }
