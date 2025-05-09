@@ -131,6 +131,13 @@ func (c *Cache[T]) Get(ctx context.Context, key string, fetcher Fetcher[T]) (val
 		return value, err
 	case errors.Is(err, errCacheMiss):
 		// If it's a cache miss, we attempt to fill the cache.
+		ctx, span := tracer.Start(
+			ctx,
+			"cache.miss",
+			trace.WithAttributes(c.spanAttributes(key)...),
+			trace.WithAttributes(attribute.String("cache.miss", "hard")),
+		)
+		defer span.End()
 		return c.fill(ctx, key, fetcher)
 	default:
 		// For any other error, we fall back to fetching data from upstream.
@@ -205,23 +212,21 @@ func (c *Cache[T]) fetch(ctx context.Context, key string, fetcher Fetcher[T]) (v
 }
 
 // fill attempts to fetch a value from the upstream (using the passed fetcher)
-// and update the cache. It is called in the event of a hard cache miss.
+// and update the cache. It is called in the event of a cache miss.
 func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
 	log := logger.With(logging.GetFields(ctx)...).Sugar()
 
-	ctx, span := tracer.Start(
-		ctx,
-		"cache.miss",
-		trace.WithAttributes(c.spanAttributes(key)...),
-		trace.WithAttributes(attribute.String("cache.miss", "hard")),
-	)
-	defer span.End()
-
 	value, err = fetcher(ctx, key)
 	if errors.Is(err, ErrDoesNotExist) {
-		if err := c.setNegative(ctx, key); err != nil {
-			return value, err
+		if cacheSetErr := c.setNegative(ctx, key); cacheSetErr != nil {
+			// Errors encountered while filling the cache are not returned to the
+			// caller: we don't want a cache availability problem to be exposed if the
+			// value was already successfully fetched.
+			recordError(ctx, cacheSetErr)
+			log.Warnw("cache set negative failed", "error", cacheSetErr)
 		}
+		// we return the original err, so the caller can handle the
+		// ErrDoesNotExist
 		return value, err
 	} else if err != nil {
 		recordError(ctx, err)
@@ -410,16 +415,9 @@ func (c *Cache[T]) refreshInner(ctx context.Context, key string, fetcher Fetcher
 		}
 	}()
 
-	value, err := fetcher(ctx, key)
-	if err != nil {
-		recordError(ctx, fmt.Errorf("error fetching fresh value for cache: %w", err))
-		return
-	}
-	err = c.set(ctx, key, value)
-	if err != nil {
-		recordError(ctx, fmt.Errorf("error updating cache: %w", err))
-		return
-	}
+	// we can ignore the error here; c.fill() will record any
+	// non-ErrDoesNotExist error for us already.
+	_, _ = c.fill(ctx, key, fetcher)
 }
 
 type keys struct {
