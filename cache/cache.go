@@ -224,7 +224,7 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 		}
 		return value, err
 	} else if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		recordError(ctx, err)
 		return value, err
 	}
 
@@ -233,7 +233,7 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 		// Errors encountered while filling the cache are not returned to the
 		// caller: we don't want a cache availability problem to be exposed if the
 		// value was already successfully fetched.
-		span.SetStatus(codes.Error, err.Error())
+		recordError(ctx, err)
 		log.Warnw("cache fill failed", "error", err)
 	}
 
@@ -303,7 +303,7 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 			log.Debugw("performing shadow write", "key", key)
 			shadowErr := c.setOnClient(shadowCtx, c.opts.ShadowWriteClient, keys, data)
 			if shadowErr != nil {
-				shadowSpan.SetStatus(codes.Error, shadowErr.Error())
+				recordError(shadowCtx, shadowErr)
 				log.Warnw("shadow write failed", "key", key, "error", shadowErr, "operation", "set")
 			}
 		}()
@@ -340,7 +340,7 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 
 			shadowErr := c.opts.ShadowWriteClient.Set(shadowCtx, keys.negative, 1, c.opts.Negative).Err()
 			if shadowErr != nil {
-				shadowSpan.SetStatus(codes.Error, shadowErr.Error())
+				recordError(shadowCtx, shadowErr)
 				log.Warnw("shadow negative write failed",
 					"key", key,
 					"error", shadowErr)
