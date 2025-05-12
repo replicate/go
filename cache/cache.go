@@ -215,9 +215,11 @@ func (c *Cache[T]) fetch(ctx context.Context, key string, fetcher Fetcher[T]) (v
 // and update the cache. It is called in the event of a cache miss.
 func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (value T, err error) {
 	log := logger.With(logging.GetFields(ctx)...).Sugar()
+	span := trace.SpanFromContext(ctx)
 
 	value, err = fetcher(ctx, key)
 	if errors.Is(err, ErrDoesNotExist) {
+		span.SetAttributes(attribute.String("cache.result", "negative (caching nonexistence)"))
 		if cacheSetErr := c.setNegative(ctx, key); cacheSetErr != nil {
 			// Errors encountered while filling the cache are not returned to the
 			// caller: we don't want a cache availability problem to be exposed if the
@@ -229,10 +231,12 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 		// ErrDoesNotExist
 		return value, err
 	} else if err != nil {
+		span.SetAttributes(attribute.String("cache.result", "error"))
 		recordError(ctx, err)
 		return value, err
 	}
 
+	span.SetAttributes(attribute.String("cache.result", "success (caching value)"))
 	err = c.set(ctx, key, value)
 	if err != nil {
 		// Errors encountered while filling the cache are not returned to the
