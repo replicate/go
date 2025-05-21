@@ -11,10 +11,11 @@ type Option interface {
 }
 
 type cacheOptions struct {
-	Fresh             time.Duration
-	Stale             time.Duration
-	Negative          time.Duration
-	ShadowWriteClient redis.Cmdable
+	Fresh              time.Duration
+	Stale              time.Duration
+	Negative           time.Duration
+	ShadowWriteClient  redis.Cmdable
+	ShadowWriteTimeout time.Duration
 }
 
 type optionFunc func(*cacheOptions)
@@ -34,8 +35,9 @@ func WithNegativeCaching(duration time.Duration) Option {
 // WithShadowWrite configures the cache to use a separate Redis client for
 // shadow writes. This is useful for writing an additional copy of data to a
 // different Redis instance than the primary instance used for caching.
-func WithShadowWriteClient(client redis.Cmdable) Option {
+func WithShadowWriteClient(client redis.Cmdable, timeout time.Duration) Option {
 	return optionFunc(func(opts *cacheOptions) {
 		opts.ShadowWriteClient = client
+		opts.ShadowWriteTimeout = timeout
 	})
 }
