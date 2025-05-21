@@ -532,7 +532,7 @@ func TestCacheWithShadowWriteClient(t *testing.T) {
 	shadowClient, shadowMock := redismock.NewClientMock()
 	shadowMock.MatchExpectationsInOrder(false)
 
-	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient))
+	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient, 1*time.Second))
 
 	obj := testObj{Value: "value_for:elephant"}
 
@@ -573,7 +573,7 @@ func TestCacheWithShadowWriteClientDirectSet(t *testing.T) {
 	shadowClient, shadowMock := redismock.NewClientMock()
 	shadowMock.MatchExpectationsInOrder(false)
 
-	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient))
+	cache := NewCache[testObj](client, "objects", fresh, stale, WithShadowWriteClient(shadowClient, 1*time.Second))
 
 	obj := testObj{Value: "direct_set_value"}
 
@@ -615,7 +615,7 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 
 	cache := NewCache[testObj](client, "objects", fresh, stale,
 		WithNegativeCaching(negative),
-		WithShadowWriteClient(shadowClient))
+		WithShadowWriteClient(shadowClient, 1*time.Second))
 
 	// Expectations for primary client
 	cacheMock.ExpectCacheFetchEmpty("elephant")
@@ -652,7 +652,7 @@ func TestCacheMultipleBackendsWithShadowWriteClient(t *testing.T) {
 		"objects",
 		fresh,
 		stale,
-		WithShadowWriteClient(shadowClient),
+		WithShadowWriteClient(shadowClient, 1*time.Second),
 	)
 
 	obj := testObj{Value: "value_for:elephant"}
@@ -726,7 +726,7 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 	// Create cache
 	cache := NewCache[testObj](client, "objects", fresh, stale,
 		WithNegativeCaching(negative),
-		WithShadowWriteClient(shadowClient))
+		WithShadowWriteClient(shadowClient, 1*time.Second))
 
 	// Test 1: Set succeeds despite shadow failure
 	obj := testObj{Value: "shadow_failure_test"}

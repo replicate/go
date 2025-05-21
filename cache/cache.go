@@ -301,19 +301,23 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	if c.opts.ShadowWriteClient != nil {
 		// Fire-and-forget shadow write
 		go func() {
-			shadowCtx, shadowSpan := tracer.Start(
-				context.Background(),
+			ctx, cancel := context.WithTimeout(ctx, c.opts.ShadowWriteTimeout)
+			defer cancel()
+
+			ctx, span := tracer.Start(
+				ctx,
 				"cache.shadow_write",
 				trace.WithAttributes(c.spanAttributes(key)...),
 				trace.WithAttributes(attribute.String("cache.operation", "set")),
 			)
-			defer shadowSpan.End()
+
+			defer span.End()
 
 			log.Debugw("performing shadow write", "key", key)
-			shadowErr := c.setOnClient(shadowCtx, c.opts.ShadowWriteClient, keys, data)
-			if shadowErr != nil {
-				recordError(shadowCtx, shadowErr)
-				log.Warnw("shadow write failed", "key", key, "error", shadowErr, "operation", "set")
+
+			if err := c.setOnClient(ctx, c.opts.ShadowWriteClient, keys, data); err != nil {
+				recordError(ctx, err)
+				log.Warnw("shadow write failed", "key", key, "error", err, "operation", "set")
 			}
 		}()
 	}
@@ -337,22 +341,23 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 	if c.opts.ShadowWriteClient != nil {
 		// Fire-and-forget shadow write
 		go func() {
-			shadowCtx, shadowSpan := tracer.Start(
-				context.Background(),
+			ctx, cancel := context.WithTimeout(ctx, c.opts.ShadowWriteTimeout)
+			defer cancel()
+
+			ctx, span := tracer.Start(
+				ctx,
 				"cache.shadow_write",
 				trace.WithAttributes(c.spanAttributes(key)...),
 				trace.WithAttributes(attribute.String("cache.operation", "setNegative")),
 			)
-			defer shadowSpan.End()
+
+			defer span.End()
 
 			log.Debugw("performing shadow negative write", "key", key)
 
-			shadowErr := c.opts.ShadowWriteClient.Set(shadowCtx, keys.negative, 1, c.opts.Negative).Err()
-			if shadowErr != nil {
-				recordError(shadowCtx, shadowErr)
-				log.Warnw("shadow negative write failed",
-					"key", key,
-					"error", shadowErr)
+			if err := c.opts.ShadowWriteClient.Set(ctx, keys.negative, 1, c.opts.Negative).Err(); err != nil {
+				recordError(ctx, err)
+				log.Warnw("shadow negative write failed", "key", key, "error", err)
 			}
 		}()
 	}
