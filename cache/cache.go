@@ -301,7 +301,7 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	if c.opts.ShadowWriteClient != nil {
 		// Fire-and-forget shadow write
 		go func() {
-			ctx, cancel := context.WithTimeout(ctx, c.opts.ShadowWriteTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), c.opts.ShadowWriteTimeout)
 			defer cancel()
 
 			ctx, span := tracer.Start(
@@ -341,7 +341,7 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 	if c.opts.ShadowWriteClient != nil {
 		// Fire-and-forget shadow write
 		go func() {
-			ctx, cancel := context.WithTimeout(ctx, c.opts.ShadowWriteTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), c.opts.ShadowWriteTimeout)
 			defer cancel()
 
 			ctx, span := tracer.Start(
