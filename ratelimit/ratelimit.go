@@ -63,12 +63,12 @@ func (l Limiter) Prepare(ctx context.Context) error {
 //
 // Note: if >1 tokens are requested the Result may indicate partial fulfillment
 // of the request by setting OK == false but Tokens > 0 on the Result.
-func (l Limiter) Take(ctx context.Context, key string, tokens, rate, capacity int) (*Result, error) {
+func (l Limiter) Take(ctx context.Context, key string, tokens int, rate float64, capacity int) (*Result, error) {
 	if tokens < 0 {
 		return nil, fmt.Errorf("%w (tokens=%d)", ErrNegativeInput, tokens)
 	}
 	if rate < 0 {
-		return nil, fmt.Errorf("%w (rate=%d)", ErrNegativeInput, rate)
+		return nil, fmt.Errorf("%w (rate=%f)", ErrNegativeInput, rate)
 	}
 	if capacity < 0 {
 		return nil, fmt.Errorf("%w (capacity=%d)", ErrNegativeInput, capacity)
@@ -89,9 +89,9 @@ func (l Limiter) Take(ctx context.Context, key string, tokens, rate, capacity in
 // the specific limiter being queried. If the token is granted, the request can
 // then look up the appropriate context for the request and call SetOptions to
 // ensure that future requests are handled with the correct rate and capacity.
-func (l Limiter) SetOptions(ctx context.Context, key string, rate, capacity int) error {
+func (l Limiter) SetOptions(ctx context.Context, key string, rate float64, capacity int) error {
 	if rate < 0 {
-		return fmt.Errorf("%w (rate=%d)", ErrNegativeInput, rate)
+		return fmt.Errorf("%w (rate=%f)", ErrNegativeInput, rate)
 	}
 	if capacity < 0 {
 		return fmt.Errorf("%w (capacity=%d)", ErrNegativeInput, capacity)
