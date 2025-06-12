@@ -28,7 +28,7 @@ var (
 	limitLuaCmd string
 	//go:embed token_bucket.lua
 	limiterCmd    string
-	limiterScript = redis.NewScript("local" + strings.Join([]string{limitLuaCmd, limiterCmd}, "\n"))
+	limiterScript = redis.NewScript("local " + strings.Join([]string{limitLuaCmd, limiterCmd}, "\n"))
 
 	ErrInvalidData   = errors.New("limiter: received invalid data")
 	ErrNegativeInput = errors.New("limiter: input values must be non-negative")
