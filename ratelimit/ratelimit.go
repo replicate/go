@@ -28,7 +28,7 @@ var (
 	limitLuaCmd string
 	//go:embed token_bucket.lua
 	limiterCmd    string
-	limiterScript = redis.NewScript("local " + strings.Join([]string{limitLuaCmd, limiterCmd}, "\n"))
+	limiterScript = redis.NewScript(strings.Join([]string{limitLuaCmd, limiterCmd}, "\n"))
 
 	ErrInvalidData   = errors.New("limiter: received invalid data")
 	ErrNegativeInput = errors.New("limiter: input values must be non-negative")
@@ -56,6 +56,7 @@ func NewLimiter(client redis.Cmdable) (Limiter, error) {
 // Prepare stores the limiter script in the Redis script cache so that it can be
 // more efficiently called with EVALSHA.
 func (l Limiter) Prepare(ctx context.Context) error {
+	fmt.Println(limiterScript)
 	return limiterScript.Load(ctx, l.client).Err()
 }
 
