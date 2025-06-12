@@ -1,3 +1,5 @@
+require("limit")
+
 print('-- TEST SUITE BEGIN --')
 
 -- Left in as a utility function for debugging. If you need to see the state, use this
@@ -65,7 +67,7 @@ function test_rate_less_than_1()
 	assert(time_to_full_bucket == 3, "Wrong time_to_fill_bucket value after 3 seconds")
 end
 
-function test_rate_greater_than_1()
+function test_rate_much_greater_than_1()
 	-- This test just tests the core logic of the rate limiter
 
 	-- Set the base time to some random time (this is the time I wrote this test)
@@ -121,12 +123,72 @@ function test_rate_greater_than_1()
 	assert(time_to_full_bucket == 6, "Wrong time_to_fill_bucket value after 3 seconds")
 end
 
+function test_rate_greater_than_1()
+	-- This test just tests the core logic of the rate limiter
+
+	-- Set the base time to some random time (this is the time I wrote this test)
+	local now = 1749676283*1e6
+	-- Make this a little bit in the past
+	local time = tostring(now - 1e2)
+	local state = {"0", time, "3", "3"}
+
+	-- If this is a new limiter, the bucket is full
+	local tokens = tonumber(state[1], 10) or capacity
+	
+	-- NOTE: tonumber with base 10 will be sad here, unlike from redis
+	local last_fill_time = tonumber(state[2]) or now
+
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 3, 3)
+
+	print_return_val(tokens_granted, tokens, time_to_full_bucket)
+
+	assert(tokens_granted == 0, "Wrong number of tokens granted for base case")
+	assert(time_to_full_bucket == 1, "Wrong time_to_fill_bucket value for base case")
+
+	-- Advance the time by 300 ms. There should still be 0 tokens in the bucket now
+	print()
+	now = now + 3e5
+
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 3, 3)
+
+	print_return_val(tokens_granted, tokens, time_to_full_bucket)
+
+	assert(tokens_granted == 0, "Wrong number of tokens granted after 1 second")
+	assert(time_to_full_bucket == 1, "Wrong time_to_fill_bucket value after 1 second")
+	
+	-- Advance the time by 300 ms. There should be 1 tokens in the bucket now
+	print()
+	now = now + 3e5
+
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 3, 3)
+
+	print_return_val(tokens_granted, tokens, time_to_full_bucket)
+
+	assert(tokens_granted == 1, "Wrong number of tokens granted after 2 seconds")
+	assert(time_to_full_bucket == 1, "Wrong time_to_fill_bucket value after 2 seconds")
+	
+	-- Advance the time by 1 ms. There should be 0 tokens in the bucket now
+	print()
+	now = now + 1e3
+
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 3, 3)
+
+	print_return_val(tokens_granted, tokens, time_to_full_bucket)
+
+	assert(tokens_granted == 0, "Wrong number of tokens granted after 3 seconds")
+	assert(time_to_full_bucket == 1, "Wrong time_to_fill_bucket value after 3 seconds")
+end
+
 print('-- TEST BEGIN: rate < 1 --')
 test_rate_less_than_1()
 print('-- TEST END --')
 
 print('-- TEST BEGIN: rate > 1 --')
 test_rate_greater_than_1()
+print('-- TEST END --')
+
+print('-- TEST BEGIN: rate >> 1 --')
+test_rate_much_greater_than_1()
 print('-- TEST END --')
 
 print('-- TEST SUITE END --')
