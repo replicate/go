@@ -1,17 +1,5 @@
 print('-- TEST SUITE BEGIN --')
 
-function print_table(t)
-	for k, v in pairs(t) do
-		print(k.."="..v)
-	end
-end
-
-function print_list(t)
-	for k, v in pairs(t) do
-		print(v)
-	end
-end
-
 -- Left in as a utility function for debugging. If you need to see the state, use this
 function print_state(s)
 	print("tokens="..s[1].." last_fill_time="..s[2].." rate="..s[3].." capacity="..s[4])
@@ -28,7 +16,7 @@ function test_rate_less_than_1()
 	local now = 1749676283*1e6
 	-- Make this a little bit in the past
 	local time = tostring(now - 1e2)
-	local state = {"1", tostring(now - 1e2), "0.4", "1"}
+	local state = {"1", time, "0.4", "1"}
 
 	-- If this is a new limiter, the bucket is full
 	local tokens = tonumber(state[1], 10) or capacity
