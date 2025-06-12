@@ -72,7 +72,7 @@ function test_rate_greater_than_1()
 	local now = 1749676283*1e6
 	-- Make this a little bit in the past
 	local time = tostring(now - 1e2)
-	local state = {"100", tostring(now - 1e2), "10", "100"}
+	local state = {"100", time, "10", "100"}
 
 	-- If this is a new limiter, the bucket is full
 	local tokens = tonumber(state[1], 10) or capacity
