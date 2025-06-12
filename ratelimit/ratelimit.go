@@ -23,8 +23,6 @@ import (
 )
 
 var (
-	//go:embed limit.lua
-	limitLuaCmd string
 	//go:embed token_bucket.lua
 	limiterCmd    string
 	limiterScript = redis.NewScript(limiterCmd)
