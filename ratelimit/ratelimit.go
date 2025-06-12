@@ -17,15 +17,18 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 var (
+	//go:embed limit.lua
+	limitLuaCmd string
 	//go:embed token_bucket.lua
 	limiterCmd    string
-	limiterScript = redis.NewScript(limiterCmd)
+	limiterScript = redis.NewScript(strings.Join([]string{limitLuaCmd, limiterCmd}, "\n"))
 
 	ErrInvalidData   = errors.New("limiter: received invalid data")
 	ErrNegativeInput = errors.New("limiter: input values must be non-negative")

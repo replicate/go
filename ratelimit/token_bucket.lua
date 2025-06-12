@@ -1,5 +1,3 @@
-require("limit")
-
 -- If the key doesn't exist and the rate + capacity arguments are not provided,
 -- the default rate limit is 50 req/s with a burst capacity of one minute's
 -- worth of requests, i.e. 50 * 60 = 3000.
