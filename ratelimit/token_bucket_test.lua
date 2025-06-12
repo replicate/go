@@ -1,3 +1,5 @@
+require("limit")
+
 print('-- TEST SUITE BEGIN --')
 
 function print_table(t)
@@ -21,40 +23,6 @@ function print_return_val(granted, tokens, time_to_full_bucket)
 	print("tokens_granted="..granted.." tokens_in_bucket="..tokens.." time_to_full_bucket="..time_to_full_bucket)
 end
 
--- This function should just hold the core logic of token_bucket.lua, ignoring any redis
-function limit(now, state, tokens_requested, rate, capacity)
-	-- If this is a new limiter, the bucket is full
-	local tokens = tonumber(state[1], 10) or capacity
-	-- NOTE: tonumber with base 10 will be sad here, unlike from redis
-	local last_fill_time = tonumber(state[2]) or now
-	
-	-- Add tokens accrued since the last fill
-	local time_since_fill = now - last_fill_time
-	local tokens_to_add = (time_since_fill / 1e6) * rate
-
-	-- Get the time the last token would have been filled
-	if tokens == capacity then
-		-- Always keep the last fill time up to date if the bucket is full so we
-		-- start penalizing immediately
-		last_fill_time = now
-	else
-		-- Add the number of tokens * the time to fill one token to the fill time
-		last_fill_time = last_fill_time + (math.floor(tokens_to_add) * (1e6/rate))
-	end
-
-	-- Never fill more than the floor of tokens
-	tokens = math.floor(math.min(tokens + tokens_to_add, capacity))
-	
-	-- Grant as many (whole) tokens as we can and remove them from the bucket
-	local tokens_granted = math.min(tokens, tokens_requested)
-	tokens = tokens - tokens_granted
-	
-	-- Calculate the time until the bucket is refilled
-	local time_to_full_bucket = math.ceil(((capacity - tokens) / rate) - ((now - last_fill_time) / 1e6))
-
-	return tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity
-end
-
 function test_rate_less_than_1()
 	-- This test just tests the core logic of the rate limiter
 
@@ -64,9 +32,14 @@ function test_rate_less_than_1()
 	local time = tostring(now - 1e2)
 	local state = {"1", tostring(now - 1e2), "0.4", "1"}
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 1, 0.4, 1)
+	-- If this is a new limiter, the bucket is full
+	local tokens = tonumber(state[1], 10) or capacity
+	
+	-- NOTE: tonumber with base 10 will be sad here, unlike from redis
+	local last_fill_time = tonumber(state[2]) or now
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 0.4, 1)
+
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 1, "Wrong number of tokens granted for base case")
@@ -76,9 +49,8 @@ function test_rate_less_than_1()
 	print()
 	now = now + 1e6
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 1, 0.4, 1)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 0.4, 1)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 0, "Wrong number of tokens granted after 1 second")
@@ -88,9 +60,8 @@ function test_rate_less_than_1()
 	print()
 	now = now + 1e6
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 1, 0.4, 1)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 0.4, 1)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 0, "Wrong number of tokens granted after 2 seconds")
@@ -100,9 +71,8 @@ function test_rate_less_than_1()
 	print()
 	now = now + 5e5
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 1, 0.4, 1)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 1, 0.4, 1)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 1, "Wrong number of tokens granted after 3 seconds")
@@ -118,9 +88,14 @@ function test_rate_greater_than_1()
 	local time = tostring(now - 1e2)
 	local state = {"100", tostring(now - 1e2), "10", "100"}
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 20, 10, 100)
+	-- If this is a new limiter, the bucket is full
+	local tokens = tonumber(state[1], 10) or capacity
+	
+	-- NOTE: tonumber with base 10 will be sad here, unlike from redis
+	local last_fill_time = tonumber(state[2]) or now
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 20, 10, 100)
+
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 20, "Wrong number of tokens granted for base case")
@@ -130,9 +105,8 @@ function test_rate_greater_than_1()
 	print()
 	now = now + 1e6
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 50, 10, 100)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 50, 10, 100)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 50, "Wrong number of tokens granted after 1 second")
@@ -142,9 +116,8 @@ function test_rate_greater_than_1()
 	print()
 	now = now + 1e6
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 60, 10, 100)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 60, 10, 100)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 50, "Wrong number of tokens granted after 2 seconds")
@@ -154,9 +127,8 @@ function test_rate_greater_than_1()
 	print()
 	now = now + 2e7
 
-	tokens_granted, time_to_full_bucket, tokens, last_fill_time, rate, capacity = limit(now, state, 60, 10, 100)
+	tokens, tokens_granted, last_fill_time, time_to_full_bucket = limit(now, tokens, last_fill_time, 60, 10, 100)
 
-	state = {tostring(tokens), tostring(last_fill_time), tostring(rate), tostring(capacity)}
 	print_return_val(tokens_granted, tokens, time_to_full_bucket)
 
 	assert(tokens_granted == 60, "Wrong number of tokens granted after 3 seconds")
