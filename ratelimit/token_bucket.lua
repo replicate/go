@@ -43,7 +43,7 @@ tokens = tokens - tokens_granted
 local time_to_full_bucket = math.ceil(((capacity - tokens) / rate) - ((now - last_fill_time) / 1e6))
 
 -- Save state and return the results
-redis.call('HSET', KEYS[1], 'tokens', tokens, 'last_fill_time', last_fill_time, 'rate', rate, 'capacity', capacity)
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'last_fill_time', math.floor(last_fill_time), 'rate', rate, 'capacity', capacity)
 
 -- Expire the key one second after the bucket is full
 redis.call('EXPIRE', KEYS[1], time_to_full_bucket + 1)

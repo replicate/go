@@ -23,5 +23,5 @@ function limit(now, tokens, last_fill_time, tokens_requested, rate, capacity)
     -- Calculate the time until the bucket is refilled
     local time_to_full_bucket = math.ceil(((capacity - tokens) / rate) - ((now - last_fill_time) / 1e6))
 
-    return tokens, tokens_granted, last_fill_time, time_to_full_bucket
+    return tokens, tokens_granted, math.floor(last_fill_time), time_to_full_bucket
 end
