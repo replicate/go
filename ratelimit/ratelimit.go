@@ -55,7 +55,6 @@ func NewLimiter(client redis.Cmdable) (Limiter, error) {
 // Prepare stores the limiter script in the Redis script cache so that it can be
 // more efficiently called with EVALSHA.
 func (l Limiter) Prepare(ctx context.Context) error {
-	fmt.Println(limiterScript)
 	return limiterScript.Load(ctx, l.client).Err()
 }
 
