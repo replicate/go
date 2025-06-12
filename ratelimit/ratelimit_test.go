@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestLimiterIntegration(t *testing.T) {
 	demandRate := 200
 
 	// rate limiter parameters
-	rate := 42
+	rate := 42.0
 	capacity := 5
 
 	deadline := time.After(time.Duration(duration) * time.Second)
@@ -55,7 +56,7 @@ Outer:
 	}
 
 	expectedTotal := demandRate * duration
-	expectedPermitted := rate * duration
+	expectedPermitted := int(math.Floor(rate * float64(duration)))
 
 	// allow up to 1% error
 	assert.InDelta(t, expectedTotal, permitted+denied, float64(expectedTotal/100))
