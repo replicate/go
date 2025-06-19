@@ -78,9 +78,10 @@ func TestWithPoolSize(t *testing.T) {
 func TestWithSentinel(t *testing.T) {
 	// This is a unit test that doesn't require actual sentinel setup
 	opts := &redis.UniversalOptions{}
+	cfg := &clientConfig{}
 
 	option := WithSentinel("mymaster", []string{"sentinel1:26379", "sentinel2:26379"}, "password")
-	err := option.apply("test-client", opts)
+	err := option.apply("test-client", opts, cfg)
 	require.NoError(t, err)
 
 	assert.Equal(t, "mymaster", opts.MasterName)
@@ -92,9 +93,10 @@ func TestWithSentinelEmpty(t *testing.T) {
 	opts := &redis.UniversalOptions{
 		Addrs: []string{"redis:6379"}, // existing address
 	}
+	cfg := &clientConfig{}
 
 	option := WithSentinel("", []string{"sentinel1:26379"}, "password")
-	err := option.apply("test-client", opts)
+	err := option.apply("test-client", opts, cfg)
 	require.NoError(t, err)
 
 	// Should not modify options when primary name is empty
@@ -106,9 +108,10 @@ func TestWithSentinelEmpty(t *testing.T) {
 func TestWithAutoTLS(t *testing.T) {
 	// Test with no TLS config
 	opts := &redis.UniversalOptions{}
+	cfg := &clientConfig{}
 
 	option := WithAutoTLS("/path/to/ca.crt")
-	err := option.apply("test-client", opts)
+	err := option.apply("test-client", opts, cfg)
 	require.NoError(t, err)
 
 	// Should not modify options when TLSConfig is nil
@@ -132,9 +135,10 @@ func TestWithAutoTLSWithExistingConfig(t *testing.T) {
 	opts := &redis.UniversalOptions{
 		TLSConfig: &tls.Config{}, // Signal that TLS is wanted
 	}
+	cfg := &clientConfig{}
 
 	option := WithAutoTLS(tmpFile.Name())
-	err = option.apply("test-client", opts)
+	err = option.apply("test-client", opts, cfg)
 	require.NoError(t, err)
 
 	// Should have configured TLS
@@ -149,10 +153,11 @@ func TestNoop(t *testing.T) {
 	opts := &redis.UniversalOptions{
 		PoolSize: 10,
 	}
+	cfg := &clientConfig{}
 	originalPoolSize := opts.PoolSize
 
 	option := Noop()
-	err := option.apply("test-client", opts)
+	err := option.apply("test-client", opts, cfg)
 	require.NoError(t, err)
 
 	// Should not modify any options

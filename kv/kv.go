@@ -6,12 +6,16 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"sync"
 
 	"github.com/hashicorp/go-rootcerts"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/replicate/go/logging"
 	"github.com/replicate/go/telemetry"
@@ -20,22 +24,41 @@ import (
 var (
 	logger       = logging.New("kv")
 	errEmptyAddr = errors.New("empty Addr field")
+
+	// Global tracer provider reuse
+	globalTracerProvider trace.TracerProvider
+	tracerProviderOnce   sync.Once
+
+	// Default pool sizes based on environment
+	defaultPoolSizes = map[string]int{
+		"production":  20,
+		"staging":     15,
+		"development": 10,
+		"test":        5,
+	}
 )
 
 // ClientOption allows configuration of Redis client options.
 type ClientOption interface {
-	apply(string, *redis.UniversalOptions) error
+	apply(string, *redis.UniversalOptions, *clientConfig) error
 }
 
-type clientOptionFunc func(string, *redis.UniversalOptions) error
+// clientConfig holds additional configuration not part of redis.UniversalOptions
+type clientConfig struct {
+	traceSamplingRate *float64
+	tracerProvider    trace.TracerProvider
+	enhancedLogging   bool
+}
 
-func (fn clientOptionFunc) apply(name string, uOpts *redis.UniversalOptions) error {
-	return fn(name, uOpts)
+type clientOptionFunc func(string, *redis.UniversalOptions, *clientConfig) error
+
+func (fn clientOptionFunc) apply(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
+	return fn(name, uOpts, cfg)
 }
 
 // Noop returns a no-operation client option.
 func Noop() ClientOption {
-	return clientOptionFunc(func(string, *redis.UniversalOptions) error {
+	return clientOptionFunc(func(string, *redis.UniversalOptions, *clientConfig) error {
 		return nil
 	})
 }
@@ -44,7 +67,14 @@ func Noop() ClientOption {
 func WithPoolSize(size int) ClientOption {
 	log := logger.Sugar()
 
-	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions) error {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
+		if size <= 0 {
+			return fmt.Errorf("pool size must be positive for client %q, got %d", name, size)
+		}
+		if size > 1000 {
+			log.Warnw("large pool size detected", "client_name", name, "pool_size", size)
+		}
+
 		log.Infow("setting pool size for client", "client_name", name, "pool_size", size)
 		uOpts.PoolSize = size
 
@@ -56,18 +86,22 @@ func WithPoolSize(size int) ClientOption {
 func WithSentinel(primaryName string, addrs []string, password string) ClientOption {
 	log := logger.Sugar()
 
-	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions) error {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
 		if primaryName == "" {
-			log.Infow("no primary name set; not configuring", "client_name", name)
-
+			log.Infow("no primary name set; not configuring sentinel", "client_name", name)
 			return nil
 		}
 
+		if len(addrs) == 0 {
+			return fmt.Errorf("sentinel addresses cannot be empty for client %q", name)
+		}
+
 		log.Infow(
-			"setting primary name, addrs, and sentinel password for client",
+			"configuring sentinel for client",
 			"client_name", name,
 			"primary_name", primaryName,
 			"addrs", addrs,
+			"password_set", password != "",
 		)
 
 		uOpts.MasterName = primaryName
@@ -82,7 +116,7 @@ func WithSentinel(primaryName string, addrs []string, password string) ClientOpt
 func WithAutoTLS(caFile string) ClientOption {
 	log := logger.Sugar()
 
-	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions) error {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
 		if uOpts.TLSConfig == nil {
 			log.Infow("no tls config present; not configuring", "client_name", name)
 
@@ -121,7 +155,9 @@ func WithAutoTLS(caFile string) ClientOption {
 
 				if _, err := cs.PeerCertificates[0].Verify(verOpts); err != nil {
 					return fmt.Errorf(
-						"failed to verify peer certificate issuer=%q subject=%q: %w",
+						"TLS verification failed for client %q (server=%q, issuer=%q, subject=%q): %w",
+						name,
+						cs.ServerName,
 						cs.PeerCertificates[0].Issuer.String(),
 						cs.PeerCertificates[0].Subject.String(),
 						err,
@@ -134,6 +170,71 @@ func WithAutoTLS(caFile string) ClientOption {
 
 		return nil
 	})
+}
+
+// WithTraceSampling sets the OpenTelemetry trace sampling rate for the Redis client.
+func WithTraceSampling(rate float64) ClientOption {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
+		if rate < 0 || rate > 1 {
+			return fmt.Errorf("trace sampling rate must be between 0 and 1 for client %q, got %f", name, rate)
+		}
+		cfg.traceSamplingRate = &rate
+		return nil
+	})
+}
+
+// WithTracerProvider allows injection of a custom OpenTelemetry tracer provider.
+func WithTracerProvider(provider trace.TracerProvider) ClientOption {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
+		if provider == nil {
+			return fmt.Errorf("tracer provider cannot be nil for client %q", name)
+		}
+		cfg.tracerProvider = provider
+		return nil
+	})
+}
+
+// WithEnhancedLogging enables more detailed logging for the Redis client.
+func WithEnhancedLogging(enabled bool) ClientOption {
+	return clientOptionFunc(func(name string, uOpts *redis.UniversalOptions, cfg *clientConfig) error {
+		cfg.enhancedLogging = enabled
+		return nil
+	})
+}
+
+// getDefaultPoolSize returns environment-appropriate default pool size.
+func getDefaultPoolSize() int {
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "development"
+	}
+
+	if size, exists := defaultPoolSizes[env]; exists {
+		return size
+	}
+	return defaultPoolSizes["development"]
+}
+
+// getTraceSamplingRate returns the trace sampling rate from environment or default.
+func getTraceSamplingRate() float64 {
+	if rateStr := os.Getenv("REDIS_TRACE_SAMPLING_RATE"); rateStr != "" {
+		if rate, err := strconv.ParseFloat(rateStr, 64); err == nil && rate >= 0 && rate <= 1 {
+			return rate
+		}
+	}
+	return 0.01 // Default 1% sampling
+}
+
+// getGlobalTracerProvider returns a shared tracer provider instance.
+func getGlobalTracerProvider() (trace.TracerProvider, error) {
+	var err error
+	tracerProviderOnce.Do(func() {
+		globalTracerProvider, err = telemetry.CreateTracerProvider(
+			context.Background(),
+			sdktrace.WithSampler(sdktrace.TraceIDRatioBased(getTraceSamplingRate())),
+		)
+	})
+	return globalTracerProvider, err
 }
 
 // optionsToUniversalOptions converts redis.Options to redis.UniversalOptions.
@@ -200,28 +301,58 @@ func optionsToUniversalOptions(opts *redis.Options) (*redis.UniversalOptions, er
 func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption) (redis.Cmdable, error) {
 	log := logger.Sugar()
 
+	if name == "" {
+		return nil, fmt.Errorf("client name cannot be empty")
+	}
+	if urlString == "" {
+		return nil, fmt.Errorf("redis URL cannot be empty for client %q", name)
+	}
+
 	opts, err := redis.ParseURL(urlString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse redis URL (%s): %w", name, err)
+		return nil, fmt.Errorf("failed to parse redis URL for client %q: %w", name, err)
 	}
 
 	uOpts, err := optionsToUniversalOptions(opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert redis options to universal options: %w", err)
+		return nil, fmt.Errorf("failed to convert redis options to universal options for client %q: %w", name, err)
 	}
 
+	// Set default pool size if not already set
+	if uOpts.PoolSize == 0 {
+		uOpts.PoolSize = getDefaultPoolSize()
+	}
+
+	// Initialize client configuration
+	cfg := &clientConfig{}
+
+	// Apply all client options
 	for _, co := range clientOpts {
-		if err := co.apply(name, uOpts); err != nil {
-			return nil, err
+		if err := co.apply(name, uOpts, cfg); err != nil {
+			return nil, fmt.Errorf("failed to apply client option for client %q: %w", name, err)
 		}
 	}
 
-	samplingTracerProvider, err := telemetry.CreateTracerProvider(
-		context.Background(),
-		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(0.01)),
-	)
-	if err != nil {
-		return nil, err
+	// Get or create tracer provider
+	var tracerProvider trace.TracerProvider
+	if cfg.tracerProvider != nil {
+		tracerProvider = cfg.tracerProvider
+	} else {
+		tracerProvider, err = getGlobalTracerProvider()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create tracer provider for client %q: %w", name, err)
+		}
+	}
+
+	// Override sampling rate if specified
+	if cfg.traceSamplingRate != nil {
+		tracerProvider, err = telemetry.CreateTracerProvider(
+			context.Background(),
+			sdktrace.WithSampler(sdktrace.TraceIDRatioBased(*cfg.traceSamplingRate)),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom tracer provider for client %q: %w", name, err)
+		}
 	}
 
 	client := redis.NewUniversalClient(uOpts)
@@ -229,21 +360,35 @@ func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption
 	if err := redisotel.InstrumentTracing(
 		client,
 		redisotel.WithAttributes(attribute.String("client.name", name)),
-		redisotel.WithTracerProvider(samplingTracerProvider),
+		redisotel.WithTracerProvider(tracerProvider),
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to instrument tracing for client %q: %w", name, err)
 	}
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to ping: %w", err)
+		return nil, fmt.Errorf("failed to ping Redis for client %q: %w", name, err)
 	}
 
-	log.Infow(
-		"Built redis client",
-		"client_name", name,
-		"addrs", uOpts.Addrs,
-		"client_type", fmt.Sprintf("%T", client),
-	)
+	// Enhanced logging if requested
+	if cfg.enhancedLogging {
+		log.Infow(
+			"redis client created with enhanced logging",
+			"client_name", name,
+			"addrs", uOpts.Addrs,
+			"db", uOpts.DB,
+			"pool_size", uOpts.PoolSize,
+			"sentinel_enabled", uOpts.MasterName != "",
+			"tls_enabled", uOpts.TLSConfig != nil,
+			"client_type", fmt.Sprintf("%T", client),
+		)
+	} else {
+		log.Infow(
+			"redis client created",
+			"client_name", name,
+			"addrs", uOpts.Addrs,
+			"client_type", fmt.Sprintf("%T", client),
+		)
+	}
 
 	return client, nil
 }
