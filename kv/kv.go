@@ -182,7 +182,7 @@ func optionsToUniversalOptions(opts *redis.Options) (*redis.UniversalOptions, er
 }
 
 // New creates a new Redis client from a URL with the given options.
-// Returns a redis.Cmdable interface for maximum compatibility across different use cases.
+// Returns a redis.UniversalClient interface which provides access to the underlying client type.
 //
 // The client is automatically instrumented with OpenTelemetry tracing and tested
 // with a ping operation before being returned.
@@ -197,7 +197,7 @@ func optionsToUniversalOptions(opts *redis.Options) (*redis.UniversalOptions, er
 //		kv.WithAutoTLS("/path/to/ca.crt"),
 //		kv.WithPoolSize(10),
 //	)
-func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption) (redis.Cmdable, error) {
+func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption) (redis.UniversalClient, error) {
 	log := logger.Sugar()
 
 	opts, err := redis.ParseURL(urlString)

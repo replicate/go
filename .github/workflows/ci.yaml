@@ -11,9 +11,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     services:
-      # Run redis so we can integration test the rate limiter
-      redis:
-        image: redis
+      # Run valkey so we can integration test the rate limiter and other Redis-dependent packages
+      valkey:
+        image: valkey/valkey:8.1-alpine
         ports:
           - 6379:6379
     steps:
