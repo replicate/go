@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Bose/minisentinel"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/replicate/go/kv"
+	"github.com/replicate/go/test"
 )
 
 var (
@@ -64,11 +63,7 @@ func TestNewWithPoolSize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	m, err := miniredis.RunTLS(testServerTLS(t))
-	require.NoError(t, err)
-	t.Cleanup(m.Close)
-
-	redisURL := "rediss://" + m.Addr()
+	redisURL := test.MiniRedisTLSURL(t, testServerTLS(t))
 
 	client, err := kv.New(
 		ctx,
@@ -90,18 +85,8 @@ func TestNewWithPoolSizeFailover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	pr := miniredis.RunT(t)
-	r0 := miniredis.RunT(t)
-
-	s := minisentinel.NewSentinel(
-		pr,
-		minisentinel.WithReplica(r0),
-		minisentinel.WithMasterName("mymaster"),
-	)
-	require.NoError(t, s.Start())
-	t.Cleanup(s.Close)
-
-	redisURL := "redis://" + s.Addr()
+	s, _ := test.MiniSentinel(t, "mymaster")
+	redisURL := test.MiniSentinelURL(t, "mymaster")
 	client, err := kv.New(
 		ctx,
 		"poolsize_with_failover_test",
@@ -123,9 +108,9 @@ func TestNewBasic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	mr := miniredis.RunT(t)
+	redisURL := test.MiniRedisURL(t)
 
-	client, err := kv.New(ctx, "basic_test", "redis://"+mr.Addr())
+	client, err := kv.New(ctx, "basic_test", redisURL)
 	require.NoError(t, err)
 	require.NotNil(t, client)
 
@@ -148,11 +133,7 @@ func TestNewWithTLS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	m, err := miniredis.RunTLS(testServerTLS(t))
-	require.NoError(t, err)
-	t.Cleanup(m.Close)
-
-	redisURL := "rediss://" + m.Addr()
+	redisURL := test.MiniRedisTLSURL(t, testServerTLS(t))
 
 	client, err := kv.New(
 		ctx,
@@ -173,18 +154,8 @@ func TestNewWithSentinel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	pr := miniredis.RunT(t)
-	r0 := miniredis.RunT(t)
-
-	s := minisentinel.NewSentinel(
-		pr,
-		minisentinel.WithReplica(r0),
-		minisentinel.WithMasterName("mymaster"),
-	)
-	require.NoError(t, s.Start())
-	t.Cleanup(s.Close)
-
-	redisURL := "redis://" + s.Addr()
+	s, _ := test.MiniSentinel(t, "mymaster")
+	redisURL := test.MiniSentinelURL(t, "mymaster")
 	client, err := kv.New(
 		ctx,
 		"sentinel_test",
@@ -212,10 +183,10 @@ func TestNewWithSentinelIgnored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	mr := miniredis.RunT(t)
+	redisURL := test.MiniRedisURL(t)
 
 	// Test with empty primary name - sentinel options should be ignored
-	client, err := kv.New(ctx, "sentinel_ignored_test", "redis://"+mr.Addr(),
+	client, err := kv.New(ctx, "sentinel_ignored_test", redisURL,
 		kv.WithSentinel("", []string{"127.0.0.1:26379", "127.0.0.1:26380"}, "sentinelpass"))
 
 	require.NoError(t, err)
@@ -240,9 +211,9 @@ func TestNewWithNoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	mr := miniredis.RunT(t)
+	redisURL := test.MiniRedisURL(t)
 
-	client, err := kv.New(ctx, "noop_test", "redis://"+mr.Addr(), kv.Noop())
+	client, err := kv.New(ctx, "noop_test", redisURL, kv.Noop())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 
