@@ -91,7 +91,7 @@ func MiniSentinel(t testing.TB, masterName string) (*minisentinel.Sentinel, *red
 		minisentinel.WithReplica(r0),
 		minisentinel.WithMasterName(masterName),
 	)
-	
+
 	if err := s.Start(); err != nil {
 		t.Fatalf("failed to start sentinel: %v", err)
 	}
