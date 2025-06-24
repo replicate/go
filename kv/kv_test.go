@@ -245,7 +245,7 @@ func TestNewWithProblematicOTELAttributes(t *testing.T) {
 	// Save original OTEL env vars
 	originalOtelAttrs := os.Getenv("OTEL_RESOURCE_ATTRIBUTES")
 	originalOtelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	
+
 	defer func() {
 		if originalOtelAttrs == "" {
 			os.Unsetenv("OTEL_RESOURCE_ATTRIBUTES")

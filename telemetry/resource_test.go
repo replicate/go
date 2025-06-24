@@ -109,12 +109,11 @@ func TestDefaultResourceWithProblematicAttributes(t *testing.T) {
 	// Save original value and singleton state
 	originalValue := os.Getenv(otelResourceAttributesEnvVar)
 	originalResource := defaultResource
-	originalOnce := defaultResourceOnce
-	
+
 	// Reset singleton to ensure our test runs fresh
 	defaultResource = nil
 	defaultResourceOnce = sync.Once{}
-	
+
 	defer func() {
 		if originalValue == "" {
 			os.Unsetenv(otelResourceAttributesEnvVar)
@@ -123,7 +122,7 @@ func TestDefaultResourceWithProblematicAttributes(t *testing.T) {
 		}
 		// Restore original singleton state
 		defaultResource = originalResource
-		defaultResourceOnce = originalOnce
+		defaultResourceOnce = sync.Once{}
 	}()
 
 	// Set the exact problematic attributes from Sentry issue
@@ -138,16 +137,16 @@ func TestDefaultResourceWithProblematicAttributes(t *testing.T) {
 	// Verify resource was created successfully
 	require.NotNil(t, resource, "DefaultResource() should not return nil")
 
-	// Verify the attributes were cleaned  
+	// Verify the attributes were cleaned
 	cleanedAttrs := os.Getenv(otelResourceAttributesEnvVar)
 	t.Logf("Original attributes: %q", problematicAttrs)
 	t.Logf("Cleaned attributes: %q", cleanedAttrs)
-	
+
 	// Check that problematic empty values were removed
-	assert.NotContains(t, cleanedAttrs, "model_container.cog_version_override=,", 
+	assert.NotContains(t, cleanedAttrs, "model_container.cog_version_override=,",
 		"Empty value 'model_container.cog_version_override=,' should be removed")
 	assert.False(t, strings.HasSuffix(cleanedAttrs, ","), "Trailing comma should be removed")
-	
+
 	// Verify all parts are valid
 	parts := strings.Split(cleanedAttrs, ",")
 	for i, part := range parts {
