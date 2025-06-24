@@ -216,22 +216,24 @@ func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption
 		}
 	}
 
+	client := redis.NewUniversalClient(uOpts)
+
+	// Try to set up telemetry, but don't fail if there are issues
+	// This prevents crashes from malformed OTEL env vars while still getting tracing when possible
 	samplingTracerProvider, err := telemetry.CreateTracerProvider(
 		context.Background(),
 		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(0.01)),
 	)
 	if err != nil {
-		return nil, err
-	}
-
-	client := redis.NewUniversalClient(uOpts)
-
-	if err := redisotel.InstrumentTracing(
-		client,
-		redisotel.WithAttributes(attribute.String("client.name", name)),
-		redisotel.WithTracerProvider(samplingTracerProvider),
-	); err != nil {
-		return nil, err
+		log.Warnw("failed to create tracer provider, continuing without Redis tracing", "error", err)
+	} else {
+		if err := redisotel.InstrumentTracing(
+			client,
+			redisotel.WithAttributes(attribute.String("client.name", name)),
+			redisotel.WithTracerProvider(samplingTracerProvider),
+		); err != nil {
+			log.Warnw("failed to instrument Redis tracing, continuing without tracing", "error", err)
+		}
 	}
 
 	if err := client.Ping(ctx).Err(); err != nil {
