@@ -21,12 +21,14 @@ var (
 	defaultResourceOnce sync.Once
 )
 
+const otelResourceAttributesEnvVar = "OTEL_RESOURCE_ATTRIBUTES"
+
 // cleanOTELResourceAttributes removes empty key=value pairs and trailing commas
 // from OTEL_RESOURCE_ATTRIBUTES to prevent "partial resource: missing value" errors.
 // This addresses the issue where empty environment variables like COG_VERSION_OVERRIDE=""
 // create malformed attributes that OpenTelemetry rejects.
 func cleanOTELResourceAttributes() {
-	attrs := os.Getenv("OTEL_RESOURCE_ATTRIBUTES")
+	attrs := os.Getenv(otelResourceAttributesEnvVar)
 	if attrs == "" {
 		return
 	}
@@ -51,10 +53,10 @@ func cleanOTELResourceAttributes() {
 
 	// Update the environment variable with cleaned attributes
 	if len(cleaned) > 0 {
-		os.Setenv("OTEL_RESOURCE_ATTRIBUTES", strings.Join(cleaned, ","))
+		os.Setenv(otelResourceAttributesEnvVar, strings.Join(cleaned, ","))
 	} else {
 		// If no valid attributes remain, unset the variable
-		os.Unsetenv("OTEL_RESOURCE_ATTRIBUTES")
+		os.Unsetenv(otelResourceAttributesEnvVar)
 	}
 }
 
