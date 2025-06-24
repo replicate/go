@@ -411,3 +411,87 @@ func TestLockTryAcquireIntegration(t *testing.T) {
 	// Check that only one goroutine got the lock
 	require.Equal(t, 1, len(results))
 }
+
+func TestLockTTL(t *testing.T) {
+	ctx := context.Background()
+	client, mock := redismock.NewClientMock()
+
+	l := &lock{
+		clients: []redis.Cmdable{client},
+		key:     "test-key",
+		token:   "test-token",
+	}
+
+	// Test successful TTL
+	mock.ExpectTTL("test-key").SetVal(30 * time.Second)
+
+	ttl, err := l.TTL(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, 30*time.Second, ttl)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockTTLNotHeld(t *testing.T) {
+	ctx := context.Background()
+	client, mock := redismock.NewClientMock()
+
+	l := &lock{
+		clients: []redis.Cmdable{client},
+		key:     "test-key",
+		token:   "test-token",
+	}
+
+	// Test when key doesn't exist (TTL = -2)
+	mock.ExpectTTL("test-key").SetVal(-2 * time.Second)
+
+	ttl, err := l.TTL(ctx)
+	assert.ErrorIs(t, err, ErrLockNotHeld)
+	assert.Equal(t, time.Duration(0), ttl)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockRefresh(t *testing.T) {
+	ctx := context.Background()
+	client, mock := redismock.NewClientMock()
+
+	l := &lock{
+		clients: []redis.Cmdable{client},
+		key:     "test-key",
+		token:   "test-token",
+	}
+
+	// Test successful refresh
+	refreshScript := `if redis.call("get", KEYS[1]) == ARGV[1] then 
+				return redis.call("expire", KEYS[1], ARGV[2]) 
+			else 
+				return 0 
+			end`
+	mock.ExpectEval(refreshScript, []string{"test-key"}, "test-token", int(60)).SetVal(int64(1))
+
+	err := l.Refresh(ctx, 60*time.Second)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockRefreshNotHeld(t *testing.T) {
+	ctx := context.Background()
+	client, mock := redismock.NewClientMock()
+
+	l := &lock{
+		clients: []redis.Cmdable{client},
+		key:     "test-key",
+		token:   "test-token",
+	}
+
+	// Test when lock is not held (script returns 0)
+	refreshScript := `if redis.call("get", KEYS[1]) == ARGV[1] then 
+				return redis.call("expire", KEYS[1], ARGV[2]) 
+			else 
+				return 0 
+			end`
+	mock.ExpectEval(refreshScript, []string{"test-key"}, "test-token", int(60)).SetVal(int64(0))
+
+	err := l.Refresh(ctx, 60*time.Second)
+	assert.ErrorIs(t, err, ErrLockNotHeld)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}

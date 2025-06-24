@@ -234,3 +234,35 @@ func TestNewWithEmptyAddr(t *testing.T) {
 	assert.Nil(t, client)
 	assert.Contains(t, err.Error(), "failed to ping")
 }
+
+func TestExists(t *testing.T) {
+	if os.Getenv("INTEGRATION") != "1" {
+		t.Skip("skipping integration test")
+	}
+
+	ctx := test.Context(t)
+	client := test.Redis(ctx, t)
+
+	// Test key that doesn't exist
+	exists, err := kv.Exists(ctx, client, "nonexistent-key")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	// Create a key
+	err = client.Set(ctx, "test-key", "test-value", 0).Err()
+	require.NoError(t, err)
+
+	// Test key that exists
+	exists, err = kv.Exists(ctx, client, "test-key")
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	// Delete the key
+	err = client.Del(ctx, "test-key").Err()
+	require.NoError(t, err)
+
+	// Test key that no longer exists
+	exists, err = kv.Exists(ctx, client, "test-key")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
