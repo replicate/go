@@ -247,3 +247,13 @@ func New(ctx context.Context, name, urlString string, clientOpts ...ClientOption
 
 	return client, nil
 }
+
+// Exists checks if a key exists in Redis. Returns true if the key exists, false otherwise.
+// May return an error if it cannot communicate with Redis.
+func Exists(ctx context.Context, client redis.UniversalClient, key string) (bool, error) {
+	result, err := client.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}

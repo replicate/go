@@ -369,7 +369,9 @@ type _nullLock struct{}
 
 var nullLock lock.Lock = &_nullLock{}
 
-func (*_nullLock) Release(context.Context) error { return nil }
+func (*_nullLock) Release(context.Context) error                { return nil }
+func (*_nullLock) TTL(context.Context) (time.Duration, error)   { return 0, lock.ErrLockNotHeld }
+func (*_nullLock) Refresh(context.Context, time.Duration) error { return lock.ErrLockNotHeld }
 
 func (c *Cache[T]) acquireIfMultipleRedises(ctx context.Context, key string, ttl time.Duration) (lock.Lock, error) {
 	if len(c.clients) == 1 {

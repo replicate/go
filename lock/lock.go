@@ -37,6 +37,8 @@ type Locker struct {
 
 type Lock interface {
 	Release(context.Context) error
+	TTL(context.Context) (time.Duration, error)
+	Refresh(context.Context, time.Duration) error
 }
 
 type lock struct {
@@ -122,6 +124,57 @@ func (l Locker) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 // Redis.
 func (l *lock) Release(ctx context.Context) error {
 	return l.release(ctx, len(l.clients))
+}
+
+// TTL returns the remaining time to live for the lock. Returns an error if
+// the lock has expired or is held by another party.
+func (l *lock) TTL(ctx context.Context) (time.Duration, error) {
+	if len(l.clients) == 0 {
+		return 0, ErrLockNotHeld
+	}
+
+	// Check the first client for TTL - all clients should have the same TTL
+	ttl, err := l.clients[0].TTL(ctx, l.key).Result()
+	if err != nil {
+		return 0, err
+	}
+
+	// If TTL is -2, the key doesn't exist; if -1, the key has no expiration
+	if ttl < 0 {
+		return 0, ErrLockNotHeld
+	}
+
+	return ttl, nil
+}
+
+// Refresh extends the lock's TTL across all clients. Returns an error if the
+// lock has expired or is held by another party.
+func (l *lock) Refresh(ctx context.Context, ttl time.Duration) error {
+	errs := []error{}
+
+	for _, client := range l.clients {
+		// Use EXPIRE command with the token verification to ensure we still hold the lock
+		result, err := client.Eval(ctx,
+			`if redis.call("get", KEYS[1]) == ARGV[1] then 
+				return redis.call("expire", KEYS[1], ARGV[2]) 
+			else 
+				return 0 
+			end`,
+			[]string{l.key},
+			l.token,
+			int(ttl.Seconds())).Result()
+
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+
+		if i, ok := result.(int64); !ok || i != 1 {
+			errs = append(errs, ErrLockNotHeld)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func (l *lock) release(ctx context.Context, n int) error {
