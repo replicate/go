@@ -10,9 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCleanOTELResourceAttributes tests the fix for Sentry issue:
-// https://replicate.sentry.io/issues/DIRECTOR-CG/
-// "Shutdown error: partial resource: missing value: []"
+// TestCleanOTELResourceAttributes tests the fix for "Shutdown error: partial resource: missing value: []"
 //
 // This error occurs when OTEL_RESOURCE_ATTRIBUTES contains empty values like:
 // - model_container.cog_version_override= (empty value after =)
@@ -68,18 +66,8 @@ func TestCleanOTELResourceAttributes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original value
-			originalValue := os.Getenv(otelResourceAttributesEnvVar)
-			defer func() {
-				if originalValue == "" {
-					os.Unsetenv(otelResourceAttributesEnvVar)
-				} else {
-					os.Setenv(otelResourceAttributesEnvVar, originalValue)
-				}
-			}()
-
 			// Set the test input
-			os.Setenv(otelResourceAttributesEnvVar, tt.input)
+			t.Setenv(otelResourceAttributesEnvVar, tt.input)
 
 			// Clean the attributes
 			cleanOTELResourceAttributes()
@@ -106,30 +94,24 @@ func TestCleanOTELResourceAttributes(t *testing.T) {
 // successfully creates a resource even with problematic OTEL_RESOURCE_ATTRIBUTES
 // that would normally cause "partial resource: missing value: []" errors.
 func TestDefaultResourceWithProblematicAttributes(t *testing.T) {
-	// Save original value and singleton state
-	originalValue := os.Getenv(otelResourceAttributesEnvVar)
+	// Save singleton state
 	originalResource := defaultResource
 
 	// Reset singleton to ensure our test runs fresh
 	defaultResource = nil
 	defaultResourceOnce = sync.Once{}
 
-	defer func() {
-		if originalValue == "" {
-			os.Unsetenv(otelResourceAttributesEnvVar)
-		} else {
-			os.Setenv(otelResourceAttributesEnvVar, originalValue)
-		}
+	t.Cleanup(func() {
 		// Restore original singleton state
 		defaultResource = originalResource
 		defaultResourceOnce = sync.Once{}
-	}()
+	})
 
 	// Set the exact problematic attributes from Sentry issue
 	// This reproduces the exact error case where COG_VERSION_OVERRIDE is empty
 	problematicAttrs := "compute_unit=gpu,compute_unit_count=1,deployable.key=dp-38f7b282eeb0429f8ec38901d1899ad0,deployment.key=dp-38f7b282eeb0429f8ec38901d1899ad0,docker_image_uri=r8.im/test/model@sha256:abc123,hardware=nvidia-a40,k8s.container.name=director,k8s.namespace.name=models,k8s.node.name=10.128.0.10,k8s.pod.name=model-dp-38f7b282eeb0429f8ec38901d1899ad0-7d8c544fd9-k55v5,model.full_name=test%2Fmodel,model.id=test%2Fmodel:abc123,model.name=model,model.owner=test,model_container.cog_version=0.12.2,model_container.cog_version_override=,model_container.cog_version_override_raw=%3E=0.11.3,version.id=abc123,"
 
-	os.Setenv(otelResourceAttributesEnvVar, problematicAttrs)
+	t.Setenv(otelResourceAttributesEnvVar, problematicAttrs)
 
 	// This should not panic or error out
 	resource := DefaultResource()

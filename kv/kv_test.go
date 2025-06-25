@@ -236,8 +236,7 @@ func TestNewWithEmptyAddr(t *testing.T) {
 }
 
 // TestNewWithProblematicOTELAttributes tests that kv.New gracefully handles
-// malformed OTEL_RESOURCE_ATTRIBUTES that would normally crash director.
-// This is the defensive behavior we added to prevent startup crashes.
+// malformed OTEL_RESOURCE_ATTRIBUTES that would normally crash the process.
 func TestNewWithProblematicOTELAttributes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -246,24 +245,25 @@ func TestNewWithProblematicOTELAttributes(t *testing.T) {
 	originalOtelAttrs := os.Getenv("OTEL_RESOURCE_ATTRIBUTES")
 	originalOtelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-	defer func() {
+	// Restore original values at end of test
+	t.Cleanup(func() {
 		if originalOtelAttrs == "" {
-			os.Unsetenv("OTEL_RESOURCE_ATTRIBUTES")
+			t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
 		} else {
-			os.Setenv("OTEL_RESOURCE_ATTRIBUTES", originalOtelAttrs)
+			t.Setenv("OTEL_RESOURCE_ATTRIBUTES", originalOtelAttrs)
 		}
 		if originalOtelEndpoint == "" {
-			os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 		} else {
-			os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", originalOtelEndpoint)
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", originalOtelEndpoint)
 		}
-	}()
+	})
 
 	// Set problematic OTEL attributes that would cause "partial resource: missing value" errors
-	// This simulates the same issue that was crashing director pods
+	// This simulates the same issue that is known to cause crashes.
 	problematicAttrs := "compute_unit=gpu,model_container.cog_version_override=,version.id=abc123,"
-	os.Setenv("OTEL_RESOURCE_ATTRIBUTES", problematicAttrs)
-	os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://invalid-endpoint:4317")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", problematicAttrs)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://invalid-endpoint:4317")
 
 	redisURL := test.MiniRedisURL(t)
 
