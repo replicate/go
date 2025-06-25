@@ -234,3 +234,54 @@ func TestNewWithEmptyAddr(t *testing.T) {
 	assert.Nil(t, client)
 	assert.Contains(t, err.Error(), "failed to ping")
 }
+
+// TestNewWithProblematicOTELAttributes tests that kv.New gracefully handles
+// malformed OTEL_RESOURCE_ATTRIBUTES that would normally crash the process.
+func TestNewWithProblematicOTELAttributes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	// Save original OTEL env vars
+	originalOtelAttrs := os.Getenv("OTEL_RESOURCE_ATTRIBUTES")
+	originalOtelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	// Restore original values at end of test
+	t.Cleanup(func() {
+		if originalOtelAttrs == "" {
+			t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
+		} else {
+			t.Setenv("OTEL_RESOURCE_ATTRIBUTES", originalOtelAttrs)
+		}
+		if originalOtelEndpoint == "" {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		} else {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", originalOtelEndpoint)
+		}
+	})
+
+	// Set problematic OTEL attributes that would cause "partial resource: missing value" errors
+	// This simulates the same issue that is known to cause crashes.
+	problematicAttrs := "compute_unit=gpu,model_container.cog_version_override=,version.id=abc123,"
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", problematicAttrs)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://invalid-endpoint:4317")
+
+	redisURL := test.MiniRedisURL(t)
+
+	// This should not crash even with problematic OTEL attributes
+	client, err := kv.New(ctx, "problematic_otel_test", redisURL)
+	require.NoError(t, err, "kv.New should not fail due to OTEL issues")
+	require.NotNil(t, client, "client should be created despite OTEL problems")
+
+	// Verify Redis functionality still works (telemetry may be disabled)
+	pong, err := client.Ping(ctx).Result()
+	require.NoError(t, err)
+	require.Equal(t, "PONG", pong)
+
+	// Test basic Redis operations
+	err = client.Set(ctx, "defensive-test", "works", time.Minute).Err()
+	require.NoError(t, err)
+
+	val, err := client.Get(ctx, "defensive-test").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "works", val)
+}
