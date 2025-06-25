@@ -5,7 +5,7 @@ go 1.24.1
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
 	github.com/getsentry/sentry-go v0.32.0
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/hashicorp/go-rootcerts v1.0.2
