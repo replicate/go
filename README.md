@@ -36,7 +36,7 @@ A redis-backed distributed lock for coordination within multi-instance services.
 
 ### `logging`
 
-Configures logging conventions for `github.com/sirupsen/logrus`.
+Configures logging conventions for [github.com/sirupsen/logrus](https://github.com/uber-go/zap).
 
 ### `ratelimit`
 
