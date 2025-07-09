@@ -17,6 +17,10 @@ applications.
 A redis-backed typed object cache implementation supporting serve-from-stale and
 asynchronous cache fills.
 
+### `debug`
+
+Debug server utilities for exposing runtime information and debugging endpoints.
+
 ### `errors`
 
 Configures conventions for recording errors: a wrapper around the Sentry SDK.
@@ -30,21 +34,47 @@ Feature flagging functions: a thin wrapper around the LaunchDarkly client.
 Conventions for creating HTTP clients with appropriate pooling and timeout
 configuration. Heavily inspired by <https://github.com/hashicorp/go-cleanhttp>.
 
+### `kv`
+
+Consolidated package for Redis/Valkey client management with Sentinel support,
+TLS configuration, and automatic OpenTelemetry instrumentation.
+
 ### `lock`
 
 A redis-backed distributed lock for coordination within multi-instance services.
 
 ### `logging`
 
-Configures logging conventions for [github.com/sirupsen/logrus](https://github.com/uber-go/zap).
+Configures logging conventions using [go.uber.org/zap](https://github.com/uber-go/zap).
+
+### `must`
+
+Utility functions for handling errors in initialization code where panicking is appropriate.
+
+### `queue`
+
+Redis streams-based queue implementation with shuffle-sharding for tenant isolation
+and workload distribution.
 
 ### `ratelimit`
 
 A redis-backed token-bucket rate limiter implementation.
 
+### `shuffleshard`
+
+Implementation of shuffle sharding for distributing workloads across multiple instances.
+
 ### `telemetry`
 
 Standard OpenTelemetry configuration and tracer creation.
+
+### `types`
+
+Common type definitions and utilities including custom duration parsing and pointer helpers.
+
+### `uuid`
+
+UUID generation utilities with support for UUIDv7 (time-ordered UUIDs).
 
 ### `version`
 
