@@ -30,6 +30,16 @@ local fields = {unpack(ARGV, 4 + n, #ARGV)}
 local key_meta = base .. ':meta'
 local key_notifications = base .. ':notifications'
 
+local prediction_id = ""
+
+-- Search for prediction_id in fields
+for i = 1, #fields, 2 do
+  if fields[i] == "prediction_id" then
+    prediction_id = fields[i + 1]
+    break
+  end
+end
+
 -- Check args
 if writestreams < 1 then
   return redis.error_reply('ERR streams must be greater than or equal to 1')
@@ -101,6 +111,28 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 
 -- Add a notification to the notifications stream
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
+
+if prediction_id ~= "" then
+  local key_prediction_meta_cancelation = ':meta:cancelation:' .. prediction_id
+  redis.CALL(
+    'SET',
+    key_prediction_meta_cancelation,
+    cjson.encode(
+      {
+        ['stream_id'] = key_stream,
+        ['prediction_id'] = prediction_id,
+        ['msg_id'] = id
+      }
+    )
+  )
+  -- Set explicit TTL for the prediction_id cancelation metadata key. Set to
+  -- 10800 seconds (3 hours). If a prediction is not picked up within 3 hours
+  -- we'll let the normal cancelation process take over. This path is intended
+  -- to allow api to snipe the prediction from the queue directly. Additionally
+  -- API should `DEL` the key after the prediction is picked up/first webhook is
+  -- sent.
+  redis.call('EXPIRE', key_prediction_meta_cancelation, 10800)
+end
 
 -- Set expiry on selected stream + meta/notifications keys
 redis.call('EXPIRE', key_stream, ttl)

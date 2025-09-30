@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -13,8 +14,9 @@ import (
 )
 
 var (
-	ErrInvalidReadArgs  = fmt.Errorf("queue: invalid read arguments")
-	ErrInvalidWriteArgs = fmt.Errorf("queue: invalid write arguments")
+	ErrInvalidReadArgs           = fmt.Errorf("queue: invalid read arguments")
+	ErrInvalidWriteArgs          = fmt.Errorf("queue: invalid write arguments")
+	ErrNoMatchingMessageInStream = fmt.Errorf("queue: no matching message in stream")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
 )
@@ -22,6 +24,8 @@ var (
 type Client struct {
 	rdb redis.Cmdable
 	ttl time.Duration // ttl for all keys in queue
+
+	withTracking bool
 }
 
 type Stats struct {
@@ -32,10 +36,11 @@ type Stats struct {
 }
 
 func NewClient(rdb redis.Cmdable, ttl time.Duration) *Client {
-	return &Client{
-		rdb: rdb,
-		ttl: ttl,
-	}
+	return &Client{rdb: rdb, ttl: ttl}
+}
+
+func NewTrackingClient(rdb redis.Cmdable, ttl time.Duration) *Client {
+	return &Client{rdb: rdb, ttl: ttl, withTracking: true}
 }
 
 // Prepare stores the write and read scripts in the Redis script cache so that
@@ -259,7 +264,47 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 		cmdArgs = append(cmdArgs, k, v)
 	}
 
+	if c.withTracking {
+		return writeTrackingScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Text()
+	}
+
 	return writeScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Text()
+}
+
+type metaCancelation struct {
+	StreamID string `json:"stream_id"`
+	MsgID    string `json:"msg_id"`
+}
+
+// Del supports removal of a message when the given `key` matches a "meta cancelation"
+// key as written when using a client with tracking support.
+func (c *Client) Del(ctx context.Context, key string) error {
+	msgBytes, err := c.rdb.Get(ctx, ":meta:cancelation:"+key).Bytes()
+	if err != nil {
+		return err
+	}
+
+	msg := &metaCancelation{}
+	if err := json.Unmarshal(msgBytes, msg); err != nil {
+		return err
+	}
+
+	n, err := c.rdb.XDel(ctx, msg.StreamID, msg.MsgID).Result()
+	if err != nil {
+		return err
+	}
+
+	if n == 0 {
+		return fmt.Errorf(
+			"key=%q; stream=%q; message id=%q: %w",
+			key,
+			msg.StreamID,
+			msg.MsgID,
+			ErrNoMatchingMessageInStream,
+		)
+	}
+
+	return nil
 }
 
 func parse(v any) (*Message, error) {
