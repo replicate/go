@@ -25,7 +25,7 @@ type Client struct {
 	rdb redis.Cmdable
 	ttl time.Duration // ttl for all keys in queue
 
-	withTracking bool
+	trackKey string
 }
 
 type Stats struct {
@@ -39,8 +39,8 @@ func NewClient(rdb redis.Cmdable, ttl time.Duration) *Client {
 	return &Client{rdb: rdb, ttl: ttl}
 }
 
-func NewTrackingClient(rdb redis.Cmdable, ttl time.Duration) *Client {
-	return &Client{rdb: rdb, ttl: ttl, withTracking: true}
+func NewTrackingClient(rdb redis.Cmdable, ttl time.Duration, key string) *Client {
+	return &Client{rdb: rdb, ttl: ttl, trackKey: key}
 }
 
 // Prepare stores the write and read scripts in the Redis script cache so that
@@ -257,6 +257,11 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 	cmdArgs = append(cmdArgs, int(c.ttl.Seconds()))
 	cmdArgs = append(cmdArgs, args.Streams)
 	cmdArgs = append(cmdArgs, len(shard))
+
+	if c.trackKey != "" {
+		cmdArgs = append(cmdArgs, c.trackKey)
+	}
+
 	for _, s := range shard {
 		cmdArgs = append(cmdArgs, s)
 	}
@@ -264,7 +269,7 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 		cmdArgs = append(cmdArgs, k, v)
 	}
 
-	if c.withTracking {
+	if c.trackKey != "" {
 		return writeTrackingScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Text()
 	}
 
@@ -279,7 +284,7 @@ type metaCancelation struct {
 // Del supports removal of a message when the given `key` matches a "meta cancelation"
 // key as written when using a client with tracking support.
 func (c *Client) Del(ctx context.Context, key string) error {
-	msgBytes, err := c.rdb.Get(ctx, ":meta:cancelation:"+key).Bytes()
+	msgBytes, err := c.rdb.Get(ctx, "_meta:cancelation:"+key).Bytes()
 	if err != nil {
 		return err
 	}

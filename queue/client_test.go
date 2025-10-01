@@ -1,6 +1,7 @@
 package queue_test
 
 import (
+	"context"
 	crand "crypto/rand"
 	"errors"
 	"fmt"
@@ -19,16 +20,34 @@ import (
 
 	"github.com/replicate/go/queue"
 	"github.com/replicate/go/test"
+	"github.com/replicate/go/uuid"
 )
 
 func TestClientIntegration(t *testing.T) {
-	ctx := test.Context(t)
-	rdb := test.Redis(ctx, t)
+	t.Run("vanilla", func(t *testing.T) {
+		ctx := test.Context(t)
+		rdb := test.Redis(ctx, t)
 
-	ttl := 24 * time.Hour
-	client := queue.NewClient(rdb, ttl)
-	require.NoError(t, client.Prepare(ctx))
+		ttl := 24 * time.Hour
+		client := queue.NewClient(rdb, ttl)
+		require.NoError(t, client.Prepare(ctx))
 
+		runClientIntegrationTest(ctx, t, client)
+	})
+
+	t.Run("with-tracking", func(t *testing.T) {
+		ctx := test.Context(t)
+		rdb := test.Redis(ctx, t)
+
+		ttl := 24 * time.Hour
+		client := queue.NewTrackingClient(rdb, ttl, "id")
+		require.NoError(t, client.Prepare(ctx))
+
+		runClientIntegrationTest(ctx, t, client)
+	})
+}
+
+func runClientIntegrationTest(ctx context.Context, t *testing.T, client *queue.Client) {
 	id := 0
 
 	for range 10 {
@@ -250,36 +269,67 @@ func TestClientReadIntegration(t *testing.T) {
 }
 
 func TestClientWriteIntegration(t *testing.T) {
-	ctx := test.Context(t)
-	rdb := test.Redis(ctx, t)
+	t.Run("vanilla", func(t *testing.T) {
+		ctx := test.Context(t)
+		rdb := test.Redis(ctx, t)
 
-	ttl := 24 * time.Hour
-	client := queue.NewClient(rdb, ttl)
-	require.NoError(t, client.Prepare(ctx))
+		ttl := 24 * time.Hour
+		client := queue.NewClient(rdb, ttl)
+		require.NoError(t, client.Prepare(ctx))
+
+		runClientWriteIntegrationTest(ctx, t, rdb, client, false)
+	})
+
+	t.Run("with-tracking", func(t *testing.T) {
+		ctx := test.Context(t)
+		rdb := test.Redis(ctx, t)
+
+		ttl := 24 * time.Hour
+		client := queue.NewTrackingClient(rdb, ttl, "tracketytrack")
+		require.NoError(t, client.Prepare(ctx))
+
+		runClientWriteIntegrationTest(ctx, t, rdb, client, true)
+	})
+}
+
+func runClientWriteIntegrationTest(ctx context.Context, t *testing.T, rdb *redis.Client, client *queue.Client, withTracking bool) {
+	trackIDs := []string{}
 
 	for i := range 10 {
-		_, err := client.Write(ctx, &queue.WriteArgs{
+		trackID, err := uuid.NewV7()
+		require.NoError(t, err)
+
+		trackIDs = append(trackIDs, trackID.String())
+
+		_, err = client.Write(ctx, &queue.WriteArgs{
 			Name:            "myqueue",
 			Streams:         2,
 			StreamsPerShard: 1,
 			ShardKey:        []byte("panda"),
 			Values: map[string]any{
-				"name": "panda",
-				"idx":  i,
+				"idx":           i,
+				"name":          "panda",
+				"tracketytrack": trackID.String(),
 			},
 		})
 		require.NoError(t, err)
 	}
 
 	for i := range 5 {
-		_, err := client.Write(ctx, &queue.WriteArgs{
+		trackID, err := uuid.NewV7()
+		require.NoError(t, err)
+
+		trackIDs = append(trackIDs, trackID.String())
+
+		_, err = client.Write(ctx, &queue.WriteArgs{
 			Name:            "myqueue",
 			Streams:         2,
 			StreamsPerShard: 1,
 			ShardKey:        []byte("giraffe"),
 			Values: map[string]any{
-				"name": "giraffe",
-				"idx":  i,
+				"idx":           i,
+				"name":          "giraffe",
+				"tracketytrack": trackID.String(),
 			},
 		})
 		require.NoError(t, err)
@@ -306,10 +356,10 @@ func TestClientWriteIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, values, 5)
 		for i, v := range values {
-			assert.Equal(t, map[string]interface{}{
-				"name": "giraffe",
-				"idx":  strconv.Itoa(i),
-			}, v.Values)
+			assert.Contains(t, v.Values, "name")
+			assert.Contains(t, v.Values, "idx")
+			assert.Equal(t, v.Values["name"], "giraffe")
+			assert.Equal(t, v.Values["idx"], strconv.Itoa(i))
 		}
 	}
 
@@ -323,10 +373,10 @@ func TestClientWriteIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, values, 10)
 		for i, v := range values {
-			assert.Equal(t, map[string]interface{}{
-				"name": "panda",
-				"idx":  strconv.Itoa(i),
-			}, v.Values)
+			assert.Contains(t, v.Values, "name")
+			assert.Contains(t, v.Values, "idx")
+			assert.Equal(t, v.Values["name"], "panda")
+			assert.Equal(t, v.Values["idx"], strconv.Itoa(i))
 		}
 	}
 
@@ -343,6 +393,60 @@ func TestClientWriteIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, ttl, 23*time.Hour)
 	}
+
+	if !withTracking {
+		return
+	}
+
+	for _, trackID := range trackIDs {
+		require.NoError(t, client.Del(ctx, trackID))
+	}
+}
+
+func TestClientDelIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewTrackingClient(rdb, ttl, "tracketytrack")
+	require.NoError(t, client.Prepare(ctx))
+
+	trackIDs := []string{}
+
+	for i := range 3 {
+		trackID, err := uuid.NewV7()
+		require.NoError(t, err)
+
+		trackIDs = append(trackIDs, trackID.String())
+
+		_, err = client.Write(ctx, &queue.WriteArgs{
+			Name:            "myqueue",
+			Streams:         2,
+			StreamsPerShard: 1,
+			ShardKey:        []byte("capybara"),
+			Values: map[string]any{
+				"idx":           i,
+				"name":          "capybara",
+				"tracketytrack": trackID.String(),
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, client.Del(ctx, trackIDs[0]))
+	require.Error(t, client.Del(ctx, trackIDs[0]))
+	require.Error(t, client.Del(ctx, trackIDs[0]+"oops"))
+	require.Error(t, client.Del(ctx, "bogustown"))
+
+	metaCancel, err := rdb.Get(ctx, "_meta:cancelation:"+trackIDs[1]).Result()
+	require.NoError(t, err)
+
+	rdb.SetEx(ctx, "_meta:cancelation:"+trackIDs[1], "{{[,"+metaCancel, 5*time.Second)
+
+	require.Error(t, client.Del(ctx, trackIDs[1]))
+
+	require.NoError(t, client.Del(ctx, trackIDs[2]))
+	require.ErrorIs(t, client.Del(ctx, trackIDs[2]), queue.ErrNoMatchingMessageInStream)
 }
 
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by

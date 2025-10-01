@@ -10,6 +10,8 @@
 --   and the queue is in the process of resizing.
 -- - `n` is the number of streams this write will consider. It must be less than
 --   or equal to `streams`.
+-- - `track_key` is the name of the key in `fields` used for tracking the stream
+--   message ID for cancelation.
 -- - `sid` are the stream IDs to consider writing to. They must be in the range
 --   [0, `streams`). The message will be written to the shortest of the selected
 --   streams.
@@ -24,18 +26,19 @@ local base = KEYS[1]
 local ttl = tonumber(ARGV[1], 10)
 local writestreams = tonumber(ARGV[2], 10)
 local n = tonumber(ARGV[3], 10)
-local sids = {unpack(ARGV, 4, 4 + n - 1)}
-local fields = {unpack(ARGV, 4 + n, #ARGV)}
+local track_key = ARGV[4]
+local sids = {unpack(ARGV, 5, 5 + n - 1)}
+local fields = {unpack(ARGV, 5 + n, #ARGV)}
 
 local key_meta = base .. ':meta'
 local key_notifications = base .. ':notifications'
 
-local prediction_id = ""
+local track_value = ""
 
--- Search for prediction_id in fields
+-- Search for track_key in fields
 for i = 1, #fields, 2 do
-  if fields[i] == "prediction_id" then
-    prediction_id = fields[i + 1]
+  if fields[i] == track_key then
+    track_value = fields[i + 1]
     break
   end
 end
@@ -112,26 +115,20 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 -- Add a notification to the notifications stream
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
-if prediction_id ~= "" then
-  local key_prediction_meta_cancelation = ':meta:cancelation:' .. prediction_id
-  redis.CALL(
+if track_value ~= "" then
+  local key_meta_cancelation = '_meta:cancelation:' .. track_value
+  redis.call(
     'SET',
-    key_prediction_meta_cancelation,
+    key_meta_cancelation,
     cjson.encode(
       {
         ['stream_id'] = key_stream,
-        ['prediction_id'] = prediction_id,
+        ['track_value'] = track_value,
         ['msg_id'] = id
       }
     )
   )
-  -- Set explicit TTL for the prediction_id cancelation metadata key. Set to
-  -- 10800 seconds (3 hours). If a prediction is not picked up within 3 hours
-  -- we'll let the normal cancelation process take over. This path is intended
-  -- to allow api to snipe the prediction from the queue directly. Additionally
-  -- API should `DEL` the key after the prediction is picked up/first webhook is
-  -- sent.
-  redis.call('EXPIRE', key_prediction_meta_cancelation, 10800)
+  redis.call('EXPIRE', key_meta_cancelation, 10800)
 end
 
 -- Set expiry on selected stream + meta/notifications keys
