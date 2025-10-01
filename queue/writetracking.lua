@@ -116,17 +116,16 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
 if track_value ~= '' then
-  local meta_cancelation_key = '_meta:cancelation:' .. redis.sha1hex(track_value)
   redis.call(
-    'SET',
-    meta_cancelation_key,
+    'SETEX',
+    '_meta:cancelation:' .. redis.sha1hex(track_value),
+    90000, -- 25 hours
     cjson.encode({
       ['stream_id'] = key_stream,
       ['track_value'] = track_value,
       ['msg_id'] = id,
     })
   )
-  redis.call('EXPIRE', meta_cancelation_key, 10800)
 end
 
 -- Set expiry on selected stream + meta/notifications keys

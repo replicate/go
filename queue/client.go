@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -15,9 +16,9 @@ import (
 )
 
 var (
-	ErrInvalidReadArgs           = fmt.Errorf("queue: invalid read arguments")
-	ErrInvalidWriteArgs          = fmt.Errorf("queue: invalid write arguments")
-	ErrNoMatchingMessageInStream = fmt.Errorf("queue: no matching message in stream")
+	ErrInvalidReadArgs           = errors.New("queue: invalid read arguments")
+	ErrInvalidWriteArgs          = errors.New("queue: invalid write arguments")
+	ErrNoMatchingMessageInStream = errors.New("queue: no matching message in stream")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
 )
