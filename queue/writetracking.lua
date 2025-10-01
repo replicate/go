@@ -1,6 +1,6 @@
 -- Write commands take the form
 --
---   EVALSHA sha 1 key seconds streams n sid [sid ...] field value [field value ...]
+--   EVALSHA sha 1 key seconds streams n track_field sid [sid ...] field value [field value ...]
 --
 -- - `key` is the base key for the queue, e.g. "prediction:input:abcd1234"
 -- - `seconds` determines the expiry timeout for all keys that make up the
@@ -10,7 +10,7 @@
 --   and the queue is in the process of resizing.
 -- - `n` is the number of streams this write will consider. It must be less than
 --   or equal to `streams`.
--- - `track_key` is the name of the key in `fields` used for tracking the stream
+-- - `track_field` is the name of the key in `fields` used for tracking the stream
 --   message ID for cancelation.
 -- - `sid` are the stream IDs to consider writing to. They must be in the range
 --   [0, `streams`). The message will be written to the shortest of the selected
@@ -26,18 +26,18 @@ local base = KEYS[1]
 local ttl = tonumber(ARGV[1], 10)
 local writestreams = tonumber(ARGV[2], 10)
 local n = tonumber(ARGV[3], 10)
-local track_key = ARGV[4]
-local sids = {unpack(ARGV, 5, 5 + n - 1)}
-local fields = {unpack(ARGV, 5 + n, #ARGV)}
+local track_field = ARGV[4]
+local sids = { unpack(ARGV, 5, 5 + n - 1) }
+local fields = { unpack(ARGV, 5 + n, #ARGV) }
 
 local key_meta = base .. ':meta'
 local key_notifications = base .. ':notifications'
 
-local track_value = ""
+local track_value = ''
 
--- Search for track_key in fields
+-- Search for track_field in fields
 for i = 1, #fields, 2 do
-  if fields[i] == track_key then
+  if fields[i] == track_field then
     track_value = fields[i + 1]
     break
   end
@@ -115,20 +115,18 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 -- Add a notification to the notifications stream
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
-if track_value ~= "" then
-  local key_meta_cancelation = '_meta:cancelation:' .. track_value
+if track_value ~= '' then
+  local meta_cancelation_key = '_meta:cancelation:' .. redis.sha1hex(track_value)
   redis.call(
     'SET',
-    key_meta_cancelation,
-    cjson.encode(
-      {
-        ['stream_id'] = key_stream,
-        ['track_value'] = track_value,
-        ['msg_id'] = id
-      }
-    )
+    meta_cancelation_key,
+    cjson.encode({
+      ['stream_id'] = key_stream,
+      ['track_value'] = track_value,
+      ['msg_id'] = id,
+    })
   )
-  redis.call('EXPIRE', key_meta_cancelation, 10800)
+  redis.call('EXPIRE', meta_cancelation_key, 10800)
 end
 
 -- Set expiry on selected stream + meta/notifications keys

@@ -3,6 +3,7 @@ package queue_test
 import (
 	"context"
 	crand "crypto/rand"
+	"crypto/sha1"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -438,10 +439,12 @@ func TestClientDelIntegration(t *testing.T) {
 	require.Error(t, client.Del(ctx, trackIDs[0]+"oops"))
 	require.Error(t, client.Del(ctx, "bogustown"))
 
-	metaCancel, err := rdb.Get(ctx, "_meta:cancelation:"+trackIDs[1]).Result()
+	metaCancelationKey := "_meta:cancelation:" + fmt.Sprintf("%x", sha1.Sum([]byte(trackIDs[1])))
+
+	metaCancel, err := rdb.Get(ctx, metaCancelationKey).Result()
 	require.NoError(t, err)
 
-	rdb.SetEx(ctx, "_meta:cancelation:"+trackIDs[1], "{{[,"+metaCancel, 5*time.Second)
+	rdb.SetEx(ctx, metaCancelationKey, "{{[,"+metaCancel, 5*time.Second)
 
 	require.Error(t, client.Del(ctx, trackIDs[1]))
 
