@@ -117,9 +117,12 @@ redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
 if track_value ~= '' then
   redis.call(
-    'SETEX',
-    '_meta:cancelation:' .. redis.sha1hex(track_value),
+    'HSETEX',
+    'meta:cancelation',
     90000, -- 25 hours
+    'FIELDS',
+    '1',
+    redis.sha1hex(track_value),
     cjson.encode({
       ['stream_id'] = key_stream,
       ['track_value'] = track_value,

@@ -286,9 +286,9 @@ type metaCancelation struct {
 // Del supports removal of a message when the given `fieldValue` matches a "meta
 // cancelation" key as written when using a client with tracking support.
 func (c *Client) Del(ctx context.Context, fieldValue string) error {
-	metaCancelationKey := fmt.Sprintf("_meta:cancelation:%x", sha1.Sum([]byte(fieldValue)))
+	metaCancelationKey := fmt.Sprintf("%x", sha1.Sum([]byte(fieldValue)))
 
-	msgBytes, err := c.rdb.Get(ctx, metaCancelationKey).Bytes()
+	msgBytes, err := c.rdb.HGet(ctx, "meta:cancelation", metaCancelationKey).Bytes()
 	if err != nil {
 		return err
 	}

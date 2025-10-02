@@ -439,12 +439,21 @@ func TestClientDelIntegration(t *testing.T) {
 	require.Error(t, client.Del(ctx, trackIDs[0]+"oops"))
 	require.Error(t, client.Del(ctx, "bogustown"))
 
-	metaCancelationKey := "_meta:cancelation:" + fmt.Sprintf("%x", sha1.Sum([]byte(trackIDs[1])))
+	metaCancelationKey := fmt.Sprintf("%x", sha1.Sum([]byte(trackIDs[1])))
 
-	metaCancel, err := rdb.Get(ctx, metaCancelationKey).Result()
+	metaCancel, err := rdb.HGet(ctx, "meta:cancelation", metaCancelationKey).Result()
 	require.NoError(t, err)
 
-	rdb.SetEx(ctx, metaCancelationKey, "{{[,"+metaCancel, 5*time.Second)
+	rdb.HSetEXWithArgs(
+		ctx,
+		"meta:cancelation",
+		&redis.HSetEXOptions{
+			ExpirationType: redis.HSetEXExpirationEX,
+			ExpirationVal:  int64(5),
+		},
+		metaCancelationKey,
+		"{{[,"+metaCancel,
+	)
 
 	require.Error(t, client.Del(ctx, trackIDs[1]))
 
