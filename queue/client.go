@@ -19,6 +19,7 @@ var (
 	ErrInvalidReadArgs           = errors.New("queue: invalid read arguments")
 	ErrInvalidWriteArgs          = errors.New("queue: invalid write arguments")
 	ErrNoMatchingMessageInStream = errors.New("queue: no matching message in stream")
+	ErrInvalidMetaCancelation    = errors.New("queue: invalid meta cancelation")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
 )
@@ -49,6 +50,16 @@ func NewTrackingClient(rdb redis.Cmdable, ttl time.Duration, field string) *Clie
 // they can be more efficiently called with EVALSHA.
 func (c *Client) Prepare(ctx context.Context) error {
 	return prepare(ctx, c.rdb)
+}
+
+// GC performs all garbage collection operations that cannot be automatically
+// performed via key expiry.
+func (c *Client) GC(ctx context.Context) error {
+	if _, err := gcMetaCancelation(ctx, c.rdb); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Len calculates the aggregate length (XLEN) of the queue. It adds up the
@@ -286,9 +297,9 @@ type metaCancelation struct {
 // Del supports removal of a message when the given `fieldValue` matches a "meta
 // cancelation" key as written when using a client with tracking support.
 func (c *Client) Del(ctx context.Context, fieldValue string) error {
-	metaCancelationKey := fmt.Sprintf("_meta:cancelation:%x", sha1.Sum([]byte(fieldValue)))
+	metaCancelationKey := fmt.Sprintf("%x", sha1.Sum([]byte(fieldValue)))
 
-	msgBytes, err := c.rdb.Get(ctx, metaCancelationKey).Bytes()
+	msgBytes, err := c.rdb.HGet(ctx, MetaCancelationHash, metaCancelationKey).Bytes()
 	if err != nil {
 		return err
 	}
@@ -296,6 +307,14 @@ func (c *Client) Del(ctx context.Context, fieldValue string) error {
 	msg := &metaCancelation{}
 	if err := json.Unmarshal(msgBytes, msg); err != nil {
 		return err
+	}
+
+	if msg.StreamID == "" {
+		return fmt.Errorf("empty stream_id: %w", ErrInvalidMetaCancelation)
+	}
+
+	if msg.MsgID == "" {
+		return fmt.Errorf("empty msg_id: %w", ErrInvalidMetaCancelation)
 	}
 
 	n, err := c.rdb.XDel(ctx, msg.StreamID, msg.MsgID).Result()
