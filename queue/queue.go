@@ -59,6 +59,10 @@ var (
 	//go:embed write.lua
 	writeCmd    string
 	writeScript = redis.NewScript(writeCmd)
+
+	//go:embed writetracking.lua
+	writeTrackingCmd    string
+	writeTrackingScript = redis.NewScript(writeTrackingCmd)
 )
 
 func prepare(ctx context.Context, rdb redis.Cmdable) error {
@@ -75,6 +79,9 @@ func prepare(ctx context.Context, rdb redis.Cmdable) error {
 		return err
 	}
 	if err := writeScript.Load(ctx, rdb).Err(); err != nil {
+		return err
+	}
+	if err := writeTrackingScript.Load(ctx, rdb).Err(); err != nil {
 		return err
 	}
 	return nil

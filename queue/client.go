@@ -2,6 +2,9 @@ package queue
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -13,8 +16,9 @@ import (
 )
 
 var (
-	ErrInvalidReadArgs  = fmt.Errorf("queue: invalid read arguments")
-	ErrInvalidWriteArgs = fmt.Errorf("queue: invalid write arguments")
+	ErrInvalidReadArgs           = errors.New("queue: invalid read arguments")
+	ErrInvalidWriteArgs          = errors.New("queue: invalid write arguments")
+	ErrNoMatchingMessageInStream = errors.New("queue: no matching message in stream")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
 )
@@ -22,6 +26,8 @@ var (
 type Client struct {
 	rdb redis.Cmdable
 	ttl time.Duration // ttl for all keys in queue
+
+	trackField string
 }
 
 type Stats struct {
@@ -32,10 +38,11 @@ type Stats struct {
 }
 
 func NewClient(rdb redis.Cmdable, ttl time.Duration) *Client {
-	return &Client{
-		rdb: rdb,
-		ttl: ttl,
-	}
+	return &Client{rdb: rdb, ttl: ttl}
+}
+
+func NewTrackingClient(rdb redis.Cmdable, ttl time.Duration, field string) *Client {
+	return &Client{rdb: rdb, ttl: ttl, trackField: field}
 }
 
 // Prepare stores the write and read scripts in the Redis script cache so that
@@ -252,6 +259,11 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 	cmdArgs = append(cmdArgs, int(c.ttl.Seconds()))
 	cmdArgs = append(cmdArgs, args.Streams)
 	cmdArgs = append(cmdArgs, len(shard))
+
+	if c.trackField != "" {
+		cmdArgs = append(cmdArgs, c.trackField)
+	}
+
 	for _, s := range shard {
 		cmdArgs = append(cmdArgs, s)
 	}
@@ -259,7 +271,50 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 		cmdArgs = append(cmdArgs, k, v)
 	}
 
+	if c.trackField != "" {
+		return writeTrackingScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Text()
+	}
+
 	return writeScript.Run(ctx, c.rdb, cmdKeys, cmdArgs...).Text()
+}
+
+type metaCancelation struct {
+	StreamID string `json:"stream_id"`
+	MsgID    string `json:"msg_id"`
+}
+
+// Del supports removal of a message when the given `fieldValue` matches a "meta
+// cancelation" key as written when using a client with tracking support.
+func (c *Client) Del(ctx context.Context, fieldValue string) error {
+	metaCancelationKey := fmt.Sprintf("_meta:cancelation:%x", sha1.Sum([]byte(fieldValue)))
+
+	msgBytes, err := c.rdb.Get(ctx, metaCancelationKey).Bytes()
+	if err != nil {
+		return err
+	}
+
+	msg := &metaCancelation{}
+	if err := json.Unmarshal(msgBytes, msg); err != nil {
+		return err
+	}
+
+	n, err := c.rdb.XDel(ctx, msg.StreamID, msg.MsgID).Result()
+	if err != nil {
+		return err
+	}
+
+	if n == 0 {
+		return fmt.Errorf(
+			"key=%q field-value=%q stream=%q message-id=%q: %w",
+			metaCancelationKey,
+			fieldValue,
+			msg.StreamID,
+			msg.MsgID,
+			ErrNoMatchingMessageInStream,
+		)
+	}
+
+	return nil
 }
 
 func parse(v any) (*Message, error) {
