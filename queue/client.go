@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/multierr"
 
 	"github.com/replicate/go/shuffleshard"
 )
@@ -20,8 +22,14 @@ var (
 	ErrInvalidWriteArgs          = errors.New("queue: invalid write arguments")
 	ErrNoMatchingMessageInStream = errors.New("queue: no matching message in stream")
 	ErrInvalidMetaCancelation    = errors.New("queue: invalid meta cancelation")
+	ErrStopGC                    = errors.New("queue: stop garbage collection")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
+)
+
+const (
+	metaCancelationGCBatchSize           = 100
+	metaCancelationGCFuncTrackValuesSize = 20
 )
 
 type Client struct {
@@ -52,14 +60,120 @@ func (c *Client) Prepare(ctx context.Context) error {
 	return prepare(ctx, c.rdb)
 }
 
+// OnGCFunc is called periodically during GC with variadic "track values" as extracted
+// from the meta cancelation key.
+type OnGCFunc func(ctx context.Context, trackValues []string) error
+
 // GC performs all garbage collection operations that cannot be automatically
-// performed via key expiry.
-func (c *Client) GC(ctx context.Context) error {
-	if _, err := gcMetaCancelation(ctx, c.rdb); err != nil {
+// performed via key expiry, which is the "meta:cancelation" hash at the time of this
+// writing.
+func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
 		return err
 	}
 
-	return nil
+	nowUnix := now.Unix()
+	nonFatalErrors := []error{}
+	idsToDelete := []string{}
+	keysToDelete := []string{}
+	iter := c.rdb.HScan(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
+
+	for iter.Next(ctx) {
+		key := iter.Val()
+
+		if len(idsToDelete) >= metaCancelationGCFuncTrackValuesSize {
+			if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
+				if errors.Is(err, ErrStopGC) {
+					return err
+				}
+
+				nonFatalErrors = append(nonFatalErrors, err)
+			}
+
+			idsToDelete = []string{}
+		}
+
+		keyParts := strings.Split(key, ":")
+		if len(keyParts) != 3 {
+			continue
+		}
+
+		keyTime, err := strconv.ParseInt(keyParts[2], 0, 64)
+		if err != nil {
+			nonFatalErrors = append(nonFatalErrors, err)
+			continue
+		}
+
+		if keyTime > nowUnix {
+			keysToDelete = append(keysToDelete, key, keyParts[0])
+			idsToDelete = append(idsToDelete, keyParts[0])
+		}
+	}
+
+	if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
+		if errors.Is(err, ErrStopGC) {
+			return err
+		}
+
+		nonFatalErrors = append(nonFatalErrors, err)
+	}
+
+	if err := iter.Err(); err != nil {
+		return err
+	}
+
+	for i := 0; i < len(keysToDelete); i += metaCancelationGCBatchSize {
+		sliceEnd := i + metaCancelationGCBatchSize
+		if sliceEnd > len(keysToDelete) {
+			sliceEnd = len(keysToDelete)
+		}
+
+		if err := c.rdb.HDel(
+			ctx,
+			MetaCancelationHash,
+			keysToDelete[i:sliceEnd]...,
+		).Err(); err != nil {
+			return err
+		}
+	}
+
+	return multierr.Combine(nonFatalErrors...)
+}
+
+func (c *Client) callOnGC(ctx context.Context, f OnGCFunc, idsToDelete []string) error {
+	if f == nil {
+		return nil
+	}
+
+	pipe := c.rdb.Pipeline()
+	hValCmds := make([]*redis.StringCmd, len(idsToDelete))
+
+	for i, idToDelete := range idsToDelete {
+		hValCmds[i] = pipe.HGet(ctx, MetaCancelationHash, idToDelete)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+
+	trackValues := make([]string, len(idsToDelete))
+
+	for i, hValCmd := range hValCmds {
+		msgBytes, err := hValCmd.Bytes()
+		if err != nil {
+			return err
+		}
+
+		msg := &metaCancelation{}
+		if err := json.Unmarshal(msgBytes, msg); err != nil {
+			return err
+		}
+
+		trackValues[i] = msg.TrackValue
+	}
+
+	return f(ctx, trackValues)
 }
 
 // Len calculates the aggregate length (XLEN) of the queue. It adds up the
@@ -267,12 +381,24 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 	// Capacity: 3 (for seconds, streams, n) + len(shard) + 2*len(values)
 	cmdArgs := make([]any, 0, 3+len(shard)+2*len(args.Values))
 
-	cmdArgs = append(cmdArgs, int(c.ttl.Seconds()))
-	cmdArgs = append(cmdArgs, args.Streams)
-	cmdArgs = append(cmdArgs, len(shard))
+	cmdArgs = append(
+		cmdArgs,
+		int(c.ttl.Seconds()),
+		args.Streams,
+		len(shard),
+	)
 
 	if c.trackField != "" {
-		cmdArgs = append(cmdArgs, c.trackField)
+		deadline := args.Deadline
+		if deadline.IsZero() {
+			deadline = time.Now().Add(25 * time.Hour)
+		}
+
+		cmdArgs = append(
+			cmdArgs,
+			c.trackField,
+			deadline.Unix(),
+		)
 	}
 
 	for _, s := range shard {
@@ -290,8 +416,9 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 }
 
 type metaCancelation struct {
-	StreamID string `json:"stream_id"`
-	MsgID    string `json:"msg_id"`
+	StreamID   string `json:"stream_id"`
+	MsgID      string `json:"msg_id"`
+	TrackValue string `json:"track_value"`
 }
 
 // Del supports removal of a message when the given `fieldValue` matches a "meta

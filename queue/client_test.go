@@ -462,7 +462,17 @@ func TestClientGCIntegration(t *testing.T) {
 
 	runClientWriteIntegrationTest(ctx, t, rdb, client, true)
 
-	require.NoError(t, client.GC(ctx))
+	gcTrackedFields := []string{}
+
+	onGCFunc := func(_ context.Context, trackedFields []string) error {
+		gcTrackedFields = append(gcTrackedFields, trackedFields...)
+
+		return nil
+	}
+
+	require.NoError(t, client.GC(ctx, onGCFunc))
+
+	require.Len(t, gcTrackedFields, 15)
 }
 
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by

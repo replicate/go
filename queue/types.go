@@ -15,8 +15,9 @@ func (e queueError) Error() string {
 const Empty = queueError("queue: empty")
 
 type WriteArgs struct {
-	Name   string         // queue name
-	Values map[string]any // message values
+	Name     string         // queue name
+	Values   map[string]any // message values
+	Deadline time.Time      // time after which message will be cancel (only when tracked)
 
 	Streams         int    // total number of streams
 	StreamsPerShard int    // number of streams in each shard
