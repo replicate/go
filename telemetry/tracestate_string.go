@@ -17,10 +17,11 @@ const _DetailLevel_name = "DetailLevelDefaultDetailLevelFull"
 var _DetailLevel_index = [...]uint8{0, 18, 33}
 
 func (i DetailLevel) String() string {
-	if i < 0 || i >= DetailLevel(len(_DetailLevel_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_DetailLevel_index)-1 {
 		return "DetailLevel(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _DetailLevel_name[_DetailLevel_index[i]:_DetailLevel_index[i+1]]
+	return _DetailLevel_name[_DetailLevel_index[idx]:_DetailLevel_index[idx+1]]
 }
 func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
@@ -36,9 +37,9 @@ const _SampleMode_name = "SampleModeNeverSampleModeDefaultSampleModeAlways"
 var _SampleMode_index = [...]uint8{0, 15, 32, 48}
 
 func (i SampleMode) String() string {
-	i -= -1
-	if i < 0 || i >= SampleMode(len(_SampleMode_index)-1) {
-		return "SampleMode(" + strconv.FormatInt(int64(i+-1), 10) + ")"
+	idx := int(i) - -1
+	if i < -1 || idx >= len(_SampleMode_index)-1 {
+		return "SampleMode(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _SampleMode_name[_SampleMode_index[i]:_SampleMode_index[i+1]]
+	return _SampleMode_name[_SampleMode_index[idx]:_SampleMode_index[idx+1]]
 }
