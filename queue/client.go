@@ -28,8 +28,7 @@ var (
 )
 
 const (
-	metaCancelationGCBatchSize           = 100
-	metaCancelationGCFuncTrackValuesSize = 20
+	metaCancelationGCBatchSize = 100
 )
 
 type Client struct {
@@ -60,8 +59,8 @@ func (c *Client) Prepare(ctx context.Context) error {
 	return prepare(ctx, c.rdb)
 }
 
-// OnGCFunc is called periodically during GC with variadic "track values" as extracted
-// from the meta cancelation key.
+// OnGCFunc is called periodically during GC *before* deleting the expired keys. The
+// argument given is the "track values" as extracted from the meta cancelation key.
 type OnGCFunc func(ctx context.Context, trackValues []string) error
 
 // GC performs all garbage collection operations that cannot be automatically
@@ -82,8 +81,8 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 	for iter.Next(ctx) {
 		key := iter.Val()
 
-		if len(idsToDelete) >= metaCancelationGCFuncTrackValuesSize {
-			if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
+		if len(idsToDelete) >= metaCancelationGCBatchSize {
+			if err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete); err != nil {
 				if errors.Is(err, ErrStopGC) {
 					return err
 				}
@@ -92,6 +91,7 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 			}
 
 			idsToDelete = []string{}
+			keysToDelete = []string{}
 		}
 
 		keyParts := strings.Split(key, ":")
@@ -111,7 +111,7 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 		}
 	}
 
-	if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
+	if err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete); err != nil {
 		if errors.Is(err, ErrStopGC) {
 			return err
 		}
@@ -123,22 +123,27 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 		return err
 	}
 
-	for i := 0; i < len(keysToDelete); i += metaCancelationGCBatchSize {
-		sliceEnd := i + metaCancelationGCBatchSize
-		if sliceEnd > len(keysToDelete) {
-			sliceEnd = len(keysToDelete)
-		}
+	return multierr.Combine(nonFatalErrors...)
+}
 
-		if err := c.rdb.HDel(
-			ctx,
-			MetaCancelationHash,
-			keysToDelete[i:sliceEnd]...,
-		).Err(); err != nil {
+func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, keysToDelete []string) error {
+	if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
+		// NOTE: The client `OnGCFunc` may request interruption via the `ErrStopGC`
+		// error as a way to prevent the `HDel`.
+		if errors.Is(err, ErrStopGC) {
 			return err
 		}
 	}
 
-	return multierr.Combine(nonFatalErrors...)
+	if err := c.rdb.HDel(
+		ctx,
+		MetaCancelationHash,
+		keysToDelete...,
+	).Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Client) callOnGC(ctx context.Context, f OnGCFunc, idsToDelete []string) error {
