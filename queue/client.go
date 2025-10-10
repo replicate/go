@@ -79,7 +79,7 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 	idsToDelete := []string{}
 	keysToDelete := []string{}
 
-	iter := c.rdb.HScan(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
+	iter := c.rdb.HScanNoValues(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
 
 	for iter.Next(ctx) {
 		key := iter.Val()
