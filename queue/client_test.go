@@ -312,6 +312,7 @@ func runClientWriteIntegrationTest(ctx context.Context, t *testing.T, rdb *redis
 				"name":          "panda",
 				"tracketytrack": trackID.String(),
 			},
+			Deadline: time.Now().Add(-1 * time.Hour),
 		})
 		require.NoError(t, err)
 	}
@@ -472,7 +473,7 @@ func TestClientGCIntegration(t *testing.T) {
 
 	require.NoError(t, client.GC(ctx, onGCFunc))
 
-	require.Len(t, gcTrackedFields, 15)
+	require.Len(t, gcTrackedFields, 10)
 }
 
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by

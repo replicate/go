@@ -28,7 +28,7 @@ local ttl = tonumber(ARGV[1], 10)
 local writestreams = tonumber(ARGV[2], 10)
 local n = tonumber(ARGV[3], 10)
 local track_field = ARGV[4]
-local deadline = ARGV[5]
+local deadline = tonumber(ARGV[5], 10)
 local sids = { unpack(ARGV, 6, 6 + n - 1) }
 local fields = { unpack(ARGV, 6 + n, #ARGV) }
 
@@ -118,6 +118,11 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
 if track_value ~= '' then
+  if deadline == 0 then
+    local server_time = redis.call('TIME')
+    deadline = tonumber(server_time[1], 10) + ttl
+  end
+
   local cancelation_key = redis.sha1hex(track_value)
   local cancelation_expiry_key = cancelation_key .. ':expiry:' .. tostring(deadline)
 

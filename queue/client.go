@@ -73,9 +73,12 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 	}
 
 	nowUnix := now.Unix()
+
 	nonFatalErrors := []error{}
+
 	idsToDelete := []string{}
 	keysToDelete := []string{}
+
 	iter := c.rdb.HScan(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
 
 	for iter.Next(ctx) {
@@ -92,6 +95,13 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 
 			idsToDelete = []string{}
 			keysToDelete = []string{}
+
+			now, err = c.rdb.Time(ctx).Result()
+			if err != nil {
+				return err
+			}
+
+			nowUnix = now.Unix()
 		}
 
 		keyParts := strings.Split(key, ":")
@@ -105,7 +115,7 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 			continue
 		}
 
-		if keyTime > nowUnix {
+		if nowUnix > keyTime {
 			keysToDelete = append(keysToDelete, key, keyParts[0])
 			idsToDelete = append(idsToDelete, keyParts[0])
 		}
@@ -127,6 +137,10 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) error {
 }
 
 func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, keysToDelete []string) error {
+	if len(idsToDelete) == 0 || len(keysToDelete) == 0 {
+		return nil
+	}
+
 	if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
 		// NOTE: The client `OnGCFunc` may request interruption via the `ErrStopGC`
 		// error as a way to prevent the `HDel`.
@@ -394,15 +408,18 @@ func (c *Client) write(ctx context.Context, args *WriteArgs) (string, error) {
 	)
 
 	if c.trackField != "" {
-		deadline := args.Deadline
-		if deadline.IsZero() {
-			deadline = time.Now().Add(25 * time.Hour)
+		deadlineUnix := int64(0)
+		if !args.Deadline.IsZero() {
+			deadlineUnix = args.Deadline.Unix()
 		}
 
 		cmdArgs = append(
 			cmdArgs,
 			c.trackField,
-			deadline.Unix(),
+			// NOTE: Deadline is an optional field in WriteArgs, so the Unix value may be
+			// passed as zero so that the writeTrackingScript uses a default value of the
+			// server time + ttl.
+			deadlineUnix,
 		)
 	}
 
