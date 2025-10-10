@@ -123,13 +123,12 @@ if track_value ~= '' then
     deadline = tonumber(server_time[1], 10) + ttl
   end
 
-  local cancelation_key = redis.sha1hex(track_value)
-  local cancelation_expiry_key = cancelation_key .. ':expiry:' .. tostring(deadline)
+  local cancelation_expiry_key = track_value .. ':expiry:' .. tostring(deadline)
 
   redis.call(
     'HSET',
     '__META_CANCELATION_HASH__',
-    cancelation_key,
+    track_value,
     cjson.encode({
       ['stream_id'] = key_stream,
       ['track_value'] = track_value,

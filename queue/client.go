@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -449,9 +448,7 @@ type metaCancelation struct {
 // Del supports removal of a message when the given `fieldValue` matches a "meta
 // cancelation" key as written when using a client with tracking support.
 func (c *Client) Del(ctx context.Context, fieldValue string) error {
-	metaCancelationKey := fmt.Sprintf("%x", sha1.Sum([]byte(fieldValue)))
-
-	msgBytes, err := c.rdb.HGet(ctx, MetaCancelationHash, metaCancelationKey).Bytes()
+	msgBytes, err := c.rdb.HGet(ctx, MetaCancelationHash, fieldValue).Bytes()
 	if err != nil {
 		return err
 	}
@@ -476,8 +473,7 @@ func (c *Client) Del(ctx context.Context, fieldValue string) error {
 
 	if n == 0 {
 		return fmt.Errorf(
-			"key=%q field-value=%q stream=%q message-id=%q: %w",
-			metaCancelationKey,
+			"field-value=%q stream=%q message-id=%q: %w",
 			fieldValue,
 			msg.StreamID,
 			msg.MsgID,
