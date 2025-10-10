@@ -65,10 +65,10 @@ type OnGCFunc func(ctx context.Context, trackValues []string) error
 // GC performs all garbage collection operations that cannot be automatically
 // performed via key expiry, which is the "meta:cancelation" hash at the time of this
 // writing.
-func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, error) {
+func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
 	now, err := c.rdb.Time(ctx).Result()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	nowUnix := now.Unix()
@@ -80,26 +80,30 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, error) {
 
 	iter := c.rdb.HScanNoValues(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
 	total := uint64(0)
+	nDeleted := uint64(0)
 
 	for iter.Next(ctx) {
 		key := iter.Val()
 		total++
 
 		if len(idsToDelete) >= metaCancelationGCBatchSize {
-			if err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete); err != nil {
+			n, err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete)
+			if err != nil {
 				if errors.Is(err, ErrStopGC) {
-					return total, err
+					return total, nDeleted, err
 				}
 
 				nonFatalErrors = append(nonFatalErrors, err)
 			}
+
+			nDeleted += uint64(n / 2)
 
 			idsToDelete = []string{}
 			keysToDelete = []string{}
 
 			now, err = c.rdb.Time(ctx).Result()
 			if err != nil {
-				return total, err
+				return total, nDeleted, err
 			}
 
 			nowUnix = now.Unix()
@@ -122,43 +126,42 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, error) {
 		}
 	}
 
-	if err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete); err != nil {
+	n, err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete)
+	if err != nil {
 		if errors.Is(err, ErrStopGC) {
-			return total, err
+			return total, nDeleted, err
 		}
 
 		nonFatalErrors = append(nonFatalErrors, err)
 	}
 
+	nDeleted += uint64(n / 2)
+
 	if err := iter.Err(); err != nil {
-		return total, err
+		return total, nDeleted, err
 	}
 
-	return total, multierr.Combine(nonFatalErrors...)
+	return total, nDeleted, multierr.Combine(nonFatalErrors...)
 }
 
-func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, keysToDelete []string) error {
+func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, keysToDelete []string) (int64, error) {
 	if len(idsToDelete) == 0 || len(keysToDelete) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	if err := c.callOnGC(ctx, f, idsToDelete); err != nil {
 		// NOTE: The client `OnGCFunc` may request interruption via the `ErrStopGC`
 		// error as a way to prevent the `HDel`.
 		if errors.Is(err, ErrStopGC) {
-			return err
+			return 0, err
 		}
 	}
 
-	if err := c.rdb.HDel(
+	return c.rdb.HDel(
 		ctx,
 		MetaCancelationHash,
 		keysToDelete...,
-	).Err(); err != nil {
-		return err
-	}
-
-	return nil
+	).Result()
 }
 
 func (c *Client) callOnGC(ctx context.Context, f OnGCFunc, idsToDelete []string) error {
