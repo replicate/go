@@ -80,7 +80,7 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
 
 	iter := c.rdb.HScanNoValues(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
 	total := uint64(0)
-	nDeleted := uint64(0)
+	twiceDeleted := uint64(0)
 
 	for iter.Next(ctx) {
 		key := iter.Val()
@@ -90,20 +90,20 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
 			n, err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete)
 			if err != nil {
 				if errors.Is(err, ErrStopGC) {
-					return total, nDeleted, err
+					return total, twiceDeleted / 2, err
 				}
 
 				nonFatalErrors = append(nonFatalErrors, err)
 			}
 
-			nDeleted += uint64(n / 2)
+			twiceDeleted += uint64(n)
 
 			idsToDelete = []string{}
 			keysToDelete = []string{}
 
 			now, err = c.rdb.Time(ctx).Result()
 			if err != nil {
-				return total, nDeleted, err
+				return total, twiceDeleted / 2, err
 			}
 
 			nowUnix = now.Unix()
@@ -129,19 +129,19 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
 	n, err := c.gcProcessBatch(ctx, f, idsToDelete, keysToDelete)
 	if err != nil {
 		if errors.Is(err, ErrStopGC) {
-			return total, nDeleted, err
+			return total, twiceDeleted / 2, err
 		}
 
 		nonFatalErrors = append(nonFatalErrors, err)
 	}
 
-	nDeleted += uint64(n / 2)
+	twiceDeleted += uint64(n)
 
 	if err := iter.Err(); err != nil {
-		return total, nDeleted, err
+		return total, twiceDeleted / 2, err
 	}
 
-	return total, nDeleted, multierr.Combine(nonFatalErrors...)
+	return total, twiceDeleted / 2, multierr.Combine(nonFatalErrors...)
 }
 
 func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, keysToDelete []string) (int64, error) {
