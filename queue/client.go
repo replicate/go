@@ -441,6 +441,7 @@ type metaCancelation struct {
 	StreamID   string `json:"stream_id"`
 	MsgID      string `json:"msg_id"`
 	TrackValue string `json:"track_value"`
+	Deadline   int64  `json:"deadline"`
 }
 
 // Del supports removal of a message when the given `fieldValue` matches a "meta

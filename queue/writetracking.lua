@@ -134,6 +134,7 @@ if track_value ~= '' then
       ['stream_id'] = key_stream,
       ['track_value'] = track_value,
       ['msg_id'] = id,
+      ['deadline'] = deadline,
     }),
     cancelation_expiry_key,
     '1'
