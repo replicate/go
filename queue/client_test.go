@@ -471,7 +471,9 @@ func TestClientGCIntegration(t *testing.T) {
 		return nil
 	}
 
-	require.NoError(t, client.GC(ctx, onGCFunc))
+	total, err := client.GC(ctx, onGCFunc)
+	require.NoError(t, err)
+	require.Equal(t, uint64(15), total)
 
 	require.Len(t, gcTrackedFields, 10)
 }
