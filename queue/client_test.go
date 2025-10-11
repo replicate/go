@@ -3,7 +3,6 @@ package queue_test
 import (
 	"context"
 	crand "crypto/rand"
-	"crypto/sha1"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -312,6 +311,7 @@ func runClientWriteIntegrationTest(ctx context.Context, t *testing.T, rdb *redis
 				"name":          "panda",
 				"tracketytrack": trackID.String(),
 			},
+			Deadline: time.Now().Add(-1 * time.Hour),
 		})
 		require.NoError(t, err)
 	}
@@ -439,12 +439,10 @@ func TestClientDelIntegration(t *testing.T) {
 	require.Error(t, client.Del(ctx, trackIDs[0]+"oops"))
 	require.Error(t, client.Del(ctx, "bogustown"))
 
-	metaCancelationKey := fmt.Sprintf("%x", sha1.Sum([]byte(trackIDs[1])))
-
-	metaCancel, err := rdb.HGet(ctx, queue.MetaCancelationHash, metaCancelationKey).Result()
+	metaCancel, err := rdb.HGet(ctx, queue.MetaCancelationHash, trackIDs[1]).Result()
 	require.NoError(t, err)
 
-	rdb.HSet(ctx, queue.MetaCancelationHash, metaCancelationKey, "{{[,bogus"+metaCancel)
+	rdb.HSet(ctx, queue.MetaCancelationHash, trackIDs[1], "{{[,bogus"+metaCancel)
 
 	require.Error(t, client.Del(ctx, trackIDs[1]))
 
@@ -462,7 +460,20 @@ func TestClientGCIntegration(t *testing.T) {
 
 	runClientWriteIntegrationTest(ctx, t, rdb, client, true)
 
-	require.NoError(t, client.GC(ctx))
+	gcTrackedFields := []string{}
+
+	onGCFunc := func(_ context.Context, trackedFields []string) error {
+		gcTrackedFields = append(gcTrackedFields, trackedFields...)
+
+		return nil
+	}
+
+	total, nDeleted, err := client.GC(ctx, onGCFunc)
+	require.NoError(t, err)
+	require.Equal(t, uint64(15), total)
+	require.Equal(t, uint64(10), nDeleted)
+
+	require.Len(t, gcTrackedFields, 10)
 }
 
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by

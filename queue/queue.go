@@ -35,9 +35,7 @@ package queue
 import (
 	"context"
 	_ "embed" // to provide go:embed support
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -76,8 +74,6 @@ var (
 
 const (
 	MetaCancelationHash = "meta:cancelation"
-
-	metaCancelationGCBatchSize = 100
 )
 
 func prepare(ctx context.Context, rdb redis.Cmdable) error {
@@ -100,49 +96,4 @@ func prepare(ctx context.Context, rdb redis.Cmdable) error {
 		return err
 	}
 	return nil
-}
-
-func gcMetaCancelation(ctx context.Context, rdb redis.Cmdable) (int, error) {
-	now := time.Now().UTC().Unix()
-	keysToDelete := []string{}
-	iter := rdb.HScan(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
-
-	for iter.Next(ctx) {
-		key := iter.Val()
-
-		keyParts := strings.Split(key, ":")
-		if len(keyParts) != 3 {
-			continue
-		}
-
-		keyTime, err := strconv.ParseInt(keyParts[2], 0, 64)
-		if err != nil {
-			continue
-		}
-
-		if keyTime > now {
-			keysToDelete = append(keysToDelete, key, keyParts[0])
-		}
-	}
-
-	if err := iter.Err(); err != nil {
-		return 0, err
-	}
-
-	for i := 0; i < len(keysToDelete); i += metaCancelationGCBatchSize {
-		sliceEnd := i + metaCancelationGCBatchSize
-		if sliceEnd > len(keysToDelete) {
-			sliceEnd = len(keysToDelete)
-		}
-
-		if err := rdb.HDel(
-			ctx,
-			MetaCancelationHash,
-			keysToDelete[i:sliceEnd]...,
-		).Err(); err != nil {
-			return 0, err
-		}
-	}
-
-	return len(keysToDelete), nil
 }

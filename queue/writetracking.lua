@@ -1,6 +1,6 @@
 -- Write commands take the form
 --
---   EVALSHA sha 1 key seconds streams n track_field sid [sid ...] field value [field value ...]
+--   EVALSHA sha 1 key seconds streams n track_field deadline sid [sid ...] field value [field value ...]
 --
 -- - `key` is the base key for the queue, e.g. "prediction:input:abcd1234"
 -- - `seconds` determines the expiry timeout for all keys that make up the
@@ -12,6 +12,7 @@
 --   or equal to `streams`.
 -- - `track_field` is the name of the key in `fields` used for tracking the stream
 --   message ID for cancelation.
+-- - `deadline` is the unix timestamp used in the cancelation key.
 -- - `sid` are the stream IDs to consider writing to. They must be in the range
 --   [0, `streams`). The message will be written to the shortest of the selected
 --   streams.
@@ -27,8 +28,9 @@ local ttl = tonumber(ARGV[1], 10)
 local writestreams = tonumber(ARGV[2], 10)
 local n = tonumber(ARGV[3], 10)
 local track_field = ARGV[4]
-local sids = { unpack(ARGV, 5, 5 + n - 1) }
-local fields = { unpack(ARGV, 5 + n, #ARGV) }
+local deadline = tonumber(ARGV[5], 10)
+local sids = { unpack(ARGV, 6, 6 + n - 1) }
+local fields = { unpack(ARGV, 6 + n, #ARGV) }
 
 local key_meta = base .. ':meta'
 local key_notifications = base .. ':notifications'
@@ -116,19 +118,22 @@ local id = redis.call('XADD', key_stream, '*', unpack(fields))
 redis.call('XADD', key_notifications, 'MAXLEN', '1', '*', 's', selected_sid)
 
 if track_value ~= '' then
-  local cancelation_key = redis.sha1hex(track_value)
-  local server_time = redis.call('TIME')
-  local expiry_unixtime = tonumber(server_time[1]) + 90000 -- 25 hours
-  local cancelation_expiry_key = cancelation_key .. ':expiry:' .. tostring(expiry_unixtime)
+  if deadline == 0 then
+    local server_time = redis.call('TIME')
+    deadline = tonumber(server_time[1], 10) + ttl
+  end
+
+  local cancelation_expiry_key = track_value .. ':expiry:' .. tostring(deadline)
 
   redis.call(
     'HSET',
     '__META_CANCELATION_HASH__',
-    cancelation_key,
+    track_value,
     cjson.encode({
       ['stream_id'] = key_stream,
       ['track_value'] = track_value,
       ['msg_id'] = id,
+      ['deadline'] = deadline,
     }),
     cancelation_expiry_key,
     '1'
