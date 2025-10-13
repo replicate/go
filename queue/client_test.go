@@ -458,8 +458,6 @@ func TestClientGCIntegration(t *testing.T) {
 	client := queue.NewTrackingClient(rdb, ttl, "tracketytrack")
 	require.NoError(t, client.Prepare(ctx))
 
-	runClientWriteIntegrationTest(ctx, t, rdb, client, true)
-
 	gcTrackedFields := []string{}
 
 	onGCFunc := func(_ context.Context, trackedFields []string) error {
@@ -468,12 +466,39 @@ func TestClientGCIntegration(t *testing.T) {
 		return nil
 	}
 
-	total, nDeleted, err := client.GC(ctx, onGCFunc)
-	require.NoError(t, err)
-	require.Equal(t, uint64(15), total)
-	require.Equal(t, uint64(10), nDeleted)
+	t.Run("full scan", func(t *testing.T) {
+		gcTrackedFields = []string{}
 
-	require.Len(t, gcTrackedFields, 10)
+		require.NoError(t, rdb.FlushAll(t.Context()).Err())
+
+		runClientWriteIntegrationTest(ctx, t, rdb, client, true)
+
+		total, nDeleted, err := client.GC(ctx, -1, onGCFunc)
+		require.NoError(t, err)
+		require.Equal(t, uint64(15), total)
+		require.Equal(t, uint64(10), nDeleted)
+
+		require.Len(t, gcTrackedFields, 10)
+	})
+
+	t.Run("scoped scan", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(t.Context()).Err())
+
+		runClientWriteIntegrationTest(ctx, t, rdb, client, true)
+
+		total, _, err := client.GC(ctx, 6, onGCFunc)
+		require.NoError(t, err)
+		require.Equal(t, uint64(10), total)
+	})
+
+	t.Run("invalid nTimeDigits", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(t.Context()).Err())
+
+		runClientWriteIntegrationTest(ctx, t, rdb, client, true)
+
+		_, _, err := client.GC(ctx, 11, onGCFunc)
+		require.Error(t, err)
+	})
 }
 
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by
