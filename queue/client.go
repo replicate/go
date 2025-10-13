@@ -21,6 +21,7 @@ var (
 	ErrInvalidWriteArgs          = errors.New("queue: invalid write arguments")
 	ErrNoMatchingMessageInStream = errors.New("queue: no matching message in stream")
 	ErrInvalidMetaCancelation    = errors.New("queue: invalid meta cancelation")
+	ErrInvalidNTimeDigits        = errors.New("queue: invalid number of timestamp digits")
 	ErrStopGC                    = errors.New("queue: stop garbage collection")
 
 	streamSuffixPattern = regexp.MustCompile(`\A:s(\d+)\z`)
@@ -62,10 +63,12 @@ func (c *Client) Prepare(ctx context.Context) error {
 // argument given is the "track values" as extracted from the meta cancelation key.
 type OnGCFunc func(ctx context.Context, trackValues []string) error
 
-// GC performs all garbage collection operations that cannot be automatically
-// performed via key expiry, which is the "meta:cancelation" hash at the time of this
-// writing.
-func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
+// GC performs all garbage collection operations that cannot be automatically performed
+// via key expiry, which is the "meta:cancelation" hash at the time of this writing. The
+// nTimeDigits argument is used to construct the key match to include that many digits of
+// of the current server time as a way of limiting the keyspace scanned. As a special
+// case, any value <= -1 will result in all keys being scanned.
+func (c *Client) GC(ctx context.Context, nTimeDigits int, f OnGCFunc) (uint64, uint64, error) {
 	now, err := c.rdb.Time(ctx).Result()
 	if err != nil {
 		return 0, 0, err
@@ -78,7 +81,18 @@ func (c *Client) GC(ctx context.Context, f OnGCFunc) (uint64, uint64, error) {
 	idsToDelete := []string{}
 	keysToDelete := []string{}
 
-	iter := c.rdb.HScanNoValues(ctx, MetaCancelationHash, 0, "*:expiry:*", 0).Iterator()
+	match := "*:expiry:*"
+	if nTimeDigits > -1 {
+		nowUnixString := strconv.Itoa(int(nowUnix))
+
+		if nTimeDigits > len(nowUnixString) {
+			return 0, 0, ErrInvalidNTimeDigits
+		}
+
+		match = fmt.Sprintf("*:expiry:%s*", nowUnixString[:nTimeDigits])
+	}
+
+	iter := c.rdb.HScanNoValues(ctx, MetaCancelationHash, 0, match, 0).Iterator()
 	total := uint64(0)
 	twiceDeleted := uint64(0)
 
