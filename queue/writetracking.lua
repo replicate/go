@@ -138,6 +138,13 @@ if track_value ~= '' then
     cancelation_expiry_key,
     '1'
   )
+
+  redis.call(
+    'ZADD',
+    '__META_DEADLINES_ZSET__',
+    deadline,
+    track_value
+  )
 end
 
 -- Set expiry on selected stream + meta/notifications keys

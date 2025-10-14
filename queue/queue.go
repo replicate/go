@@ -65,7 +65,11 @@ var (
 	writeTrackingCmd    string
 	writeTrackingScript = redis.NewScript(
 		strings.ReplaceAll(
-			writeTrackingCmd,
+			strings.ReplaceAll(
+				writeTrackingCmd,
+				"__META_DEADLINES_ZSET__",
+				MetaDeadlinesZSet,
+			),
 			"__META_CANCELATION_HASH__",
 			MetaCancelationHash,
 		),
@@ -73,7 +77,9 @@ var (
 )
 
 const (
-	MetaCancelationHash = "meta:cancelation"
+	MetaCancelationHash     = "meta:cancelation"
+	MetaDeadlinesZSet       = "meta:deadlines"
+	MetaPresortedGarbageSet = "meta:presortedgarbage"
 )
 
 func prepare(ctx context.Context, rdb redis.Cmdable) error {
