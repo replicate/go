@@ -501,7 +501,7 @@ func TestClientGCIntegration(t *testing.T) {
 	})
 }
 
-func TestClientDeadlineExceededIntegration(t *testing.T) {
+func TestClientCordonDeadlineExceededIntegration(t *testing.T) {
 	ctx := test.Context(t)
 	rdb := test.Redis(ctx, t)
 
@@ -512,7 +512,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 	t.Run("empty queue", func(t *testing.T) {
 		require.NoError(t, rdb.FlushAll(ctx).Err())
 
-		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 1*time.Hour)
 		require.NoError(t, err)
 		assert.Empty(t, exceeded)
 	})
@@ -543,7 +543,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		}
 
 		t.Logf("Checking for exceeded deadlines within past hour - should be empty")
-		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 1*time.Hour)
 		require.NoError(t, err)
 		assert.Empty(t, exceeded)
 	})
@@ -577,7 +577,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		}
 
 		t.Logf("Checking for deadlines exceeded within past hour - should get all 5")
-		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 1*time.Hour)
 		require.NoError(t, err)
 		assert.Len(t, exceeded, 5)
 
@@ -641,7 +641,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		}
 
 		t.Logf("Checking within past hour - should only get the recent ones")
-		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 1*time.Hour)
 		require.NoError(t, err)
 		assert.Len(t, exceeded, 3)
 
@@ -708,7 +708,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		}
 
 		t.Logf("Checking within past 1 hour - should only get the recent ones")
-		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 1*time.Hour)
 		require.NoError(t, err)
 		assert.Len(t, exceeded, 3)
 
@@ -723,10 +723,19 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 			assert.False(t, exceededSet[trackID], "expected old track ID %s to not be in exceeded list", trackID)
 		}
 
-		t.Logf("Checking within past 3 hours - should get all messages")
-		exceeded, err = client.DeadlineExceeded(ctx, 3*time.Hour)
+		t.Logf("Checking within past 3 hours - should get remaining 2 old messages")
+		exceeded, err = client.CordonDeadlineExceeded(ctx, 3*time.Hour)
 		require.NoError(t, err)
-		assert.Len(t, exceeded, 5)
+		assert.Len(t, exceeded, 2)
+
+		t.Logf("Verifying only old track IDs are present")
+		exceededSet = make(map[string]bool)
+		for _, id := range exceeded {
+			exceededSet[id] = true
+		}
+		for _, trackID := range oldTrackIDs {
+			assert.True(t, exceededSet[trackID], "expected old track ID %s to be in exceeded list", trackID)
+		}
 	})
 
 	t.Run("zero duration", func(t *testing.T) {
@@ -753,7 +762,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Logf("Checking with zero duration - should not return anything")
-		exceeded, err := client.DeadlineExceeded(ctx, 0)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 0)
 		require.NoError(t, err)
 		assert.Empty(t, exceeded)
 	})
@@ -782,7 +791,7 @@ func TestClientDeadlineExceededIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Logf("Checking with 5 second window - should include items at or just before now")
-		exceeded, err := client.DeadlineExceeded(ctx, 5*time.Second)
+		exceeded, err := client.CordonDeadlineExceeded(ctx, 5*time.Second)
 		require.NoError(t, err)
 		assert.Contains(t, exceeded, justExpiredID.String())
 	})

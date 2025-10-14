@@ -77,8 +77,9 @@ var (
 )
 
 const (
-	MetaCancelationHash = "meta:cancelation"
-	MetaDeadlinesZSet   = "meta:deadlines"
+	MetaCancelationHash     = "meta:cancelation"
+	MetaDeadlinesZSet       = "meta:deadlines"
+	MetaPresortedGarbageSet = "meta:presortedgarbage"
 )
 
 func prepare(ctx context.Context, rdb redis.Cmdable) error {
