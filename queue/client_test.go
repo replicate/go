@@ -486,7 +486,7 @@ func TestClientGCIntegration(t *testing.T) {
 
 		runClientWriteIntegrationTest(ctx, t, rdb, client, true)
 
-		total, _, err := client.GC(ctx, 6, onGCFunc)
+		total, _, err := client.GC(ctx, 5, onGCFunc)
 		require.NoError(t, err)
 		require.Equal(t, uint64(10), total)
 	})
