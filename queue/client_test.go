@@ -501,6 +501,293 @@ func TestClientGCIntegration(t *testing.T) {
 	})
 }
 
+func TestClientDeadlineExceededIntegration(t *testing.T) {
+	ctx := test.Context(t)
+	rdb := test.Redis(ctx, t)
+
+	ttl := 24 * time.Hour
+	client := queue.NewTrackingClient(rdb, ttl, "tracking_id")
+	require.NoError(t, client.Prepare(ctx))
+
+	t.Run("empty queue", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		require.NoError(t, err)
+		assert.Empty(t, exceeded)
+	})
+
+	t.Run("no deadlines exceeded", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		t.Logf("Writing messages with deadlines in the future")
+		for i := range 5 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("message-%d", i),
+				},
+				Deadline: now.Add(2 * time.Hour),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Checking for exceeded deadlines within past hour - should be empty")
+		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		require.NoError(t, err)
+		assert.Empty(t, exceeded)
+	})
+
+	t.Run("recently exceeded deadlines", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		trackIDs := []string{}
+
+		t.Logf("Writing messages with deadlines recently exceeded (30 minutes in the past)")
+		for i := range 5 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+			trackIDs = append(trackIDs, trackID.String())
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("message-%d", i),
+				},
+				Deadline: now.Add(-30 * time.Minute),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Checking for deadlines exceeded within past hour - should get all 5")
+		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		require.NoError(t, err)
+		assert.Len(t, exceeded, 5)
+
+		t.Logf("Verifying all track IDs are present")
+		exceededSet := make(map[string]bool)
+		for _, id := range exceeded {
+			exceededSet[id] = true
+		}
+		for _, trackID := range trackIDs {
+			assert.True(t, exceededSet[trackID], "expected track ID %s to be in exceeded list", trackID)
+		}
+	})
+
+	t.Run("mixed deadlines", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		recentTrackIDs := []string{}
+		oldTrackIDs := []string{}
+
+		t.Logf("Writing 3 messages with recently exceeded deadlines (30 minutes in the past)")
+		for i := range 3 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+			recentTrackIDs = append(recentTrackIDs, trackID.String())
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("recent-key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("recent-message-%d", i),
+				},
+				Deadline: now.Add(-30 * time.Minute),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Writing 2 messages with old exceeded deadlines (2 hours in the past)")
+		for i := range 2 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+			oldTrackIDs = append(oldTrackIDs, trackID.String())
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("old-key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("old-message-%d", i),
+				},
+				Deadline: now.Add(-2 * time.Hour),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Checking within past hour - should only get the recent ones")
+		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		require.NoError(t, err)
+		assert.Len(t, exceeded, 3)
+
+		t.Logf("Verifying only recent track IDs are present")
+		exceededSet := make(map[string]bool)
+		for _, id := range exceeded {
+			exceededSet[id] = true
+		}
+		for _, trackID := range recentTrackIDs {
+			assert.True(t, exceededSet[trackID], "expected recent track ID %s to be in exceeded list", trackID)
+		}
+		for _, trackID := range oldTrackIDs {
+			assert.False(t, exceededSet[trackID], "expected old track ID %s to not be in exceeded list", trackID)
+		}
+	})
+
+	t.Run("within window filters correctly", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		recentTrackIDs := []string{}
+		oldTrackIDs := []string{}
+
+		t.Logf("Writing messages with deadlines 30 minutes in the past")
+		for i := range 3 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+			recentTrackIDs = append(recentTrackIDs, trackID.String())
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("recent-key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("recent-message-%d", i),
+				},
+				Deadline: now.Add(-30 * time.Minute),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Writing messages with deadlines 2 hours in the past")
+		for i := range 2 {
+			trackID, err := uuid.NewV7()
+			require.NoError(t, err)
+			oldTrackIDs = append(oldTrackIDs, trackID.String())
+
+			_, err = client.Write(ctx, &queue.WriteArgs{
+				Name:            "testqueue",
+				Streams:         2,
+				StreamsPerShard: 1,
+				ShardKey:        []byte(fmt.Sprintf("old-key-%d", i)),
+				Values: map[string]any{
+					"tracking_id": trackID.String(),
+					"data":        fmt.Sprintf("old-message-%d", i),
+				},
+				Deadline: now.Add(-2 * time.Hour),
+			})
+			require.NoError(t, err)
+		}
+
+		t.Logf("Checking within past 1 hour - should only get the recent ones")
+		exceeded, err := client.DeadlineExceeded(ctx, 1*time.Hour)
+		require.NoError(t, err)
+		assert.Len(t, exceeded, 3)
+
+		exceededSet := make(map[string]bool)
+		for _, id := range exceeded {
+			exceededSet[id] = true
+		}
+		for _, trackID := range recentTrackIDs {
+			assert.True(t, exceededSet[trackID], "expected recent track ID %s to be in exceeded list", trackID)
+		}
+		for _, trackID := range oldTrackIDs {
+			assert.False(t, exceededSet[trackID], "expected old track ID %s to not be in exceeded list", trackID)
+		}
+
+		t.Logf("Checking within past 3 hours - should get all messages")
+		exceeded, err = client.DeadlineExceeded(ctx, 3*time.Hour)
+		require.NoError(t, err)
+		assert.Len(t, exceeded, 5)
+	})
+
+	t.Run("zero duration", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		t.Logf("Writing a message with a deadline 1 second in the past")
+		trackID, err := uuid.NewV7()
+		require.NoError(t, err)
+
+		_, err = client.Write(ctx, &queue.WriteArgs{
+			Name:            "testqueue",
+			Streams:         2,
+			StreamsPerShard: 1,
+			ShardKey:        []byte("test-key"),
+			Values: map[string]any{
+				"tracking_id": trackID.String(),
+				"data":        "test-message",
+			},
+			Deadline: now.Add(-1 * time.Second),
+		})
+		require.NoError(t, err)
+
+		t.Logf("Checking with zero duration - should not return anything")
+		exceeded, err := client.DeadlineExceeded(ctx, 0)
+		require.NoError(t, err)
+		assert.Empty(t, exceeded)
+	})
+
+	t.Run("boundary at now", func(t *testing.T) {
+		require.NoError(t, rdb.FlushAll(ctx).Err())
+
+		now, err := rdb.Time(ctx).Result()
+		require.NoError(t, err)
+
+		justExpiredID, err := uuid.NewV7()
+		require.NoError(t, err)
+
+		t.Logf("Writing a message with deadline right around now")
+		_, err = client.Write(ctx, &queue.WriteArgs{
+			Name:            "testqueue",
+			Streams:         2,
+			StreamsPerShard: 1,
+			ShardKey:        []byte("test-key"),
+			Values: map[string]any{
+				"tracking_id": justExpiredID.String(),
+				"data":        "test-message",
+			},
+			Deadline: now,
+		})
+		require.NoError(t, err)
+
+		t.Logf("Checking with 5 second window - should include items at or just before now")
+		exceeded, err := client.DeadlineExceeded(ctx, 5*time.Second)
+		require.NoError(t, err)
+		assert.Contains(t, exceeded, justExpiredID.String())
+	})
+}
+
 // TestPickupLatencyIntegration runs a test with a mostly-empty queue -- by
 // running artificially slow producers and full-speed consumers -- to ensure
 // that the blocking read operation has low latency.

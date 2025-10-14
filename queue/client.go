@@ -171,11 +171,23 @@ func (c *Client) gcProcessBatch(ctx context.Context, f OnGCFunc, idsToDelete, ke
 		}
 	}
 
-	return c.rdb.HDel(
-		ctx,
-		MetaCancelationHash,
-		keysToDelete...,
-	).Result()
+	nDeleted, err := c.rdb.HDel(ctx, MetaCancelationHash, keysToDelete...).Result()
+	if err != nil {
+		return nDeleted, err
+	}
+
+	// NOTE: ZRem requires an explicit []any which cannot be automatically
+	// converted from a []string.
+	zremArgs := make([]any, len(idsToDelete))
+	for i, id := range idsToDelete {
+		zremArgs[i] = id
+	}
+
+	if err := c.rdb.ZRem(ctx, MetaDeadlinesZSet, zremArgs...).Err(); err != nil {
+		return nDeleted, err
+	}
+
+	return nDeleted, nil
 }
 
 func (c *Client) callOnGC(ctx context.Context, f OnGCFunc, idsToDelete []string) error {
@@ -211,6 +223,25 @@ func (c *Client) callOnGC(ctx context.Context, f OnGCFunc, idsToDelete []string)
 	}
 
 	return f(ctx, trackValues)
+}
+
+// DeadlineExceeded returns a slice of "track values" that have exceeded their deadline
+// within a given duration into the past. The times are truncated to the second because
+// the deadlines scored set uses unix timestamps as scores.
+func (c *Client) DeadlineExceeded(ctx context.Context, within time.Duration) ([]string, error) {
+	start, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return []string{}, err
+	}
+
+	return c.rdb.ZRangeByScore(
+		ctx,
+		MetaDeadlinesZSet,
+		&redis.ZRangeBy{
+			Min: strconv.Itoa(int(start.Add(-within).Unix())),
+			Max: strconv.Itoa(int(start.Add(1 * time.Second).Unix())),
+		},
+	).Result()
 }
 
 // Len calculates the aggregate length (XLEN) of the queue. It adds up the
