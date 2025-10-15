@@ -268,7 +268,7 @@ func (c *Client) CordonDeadlineExceeded(ctx context.Context, within time.Duratio
 	pipe := c.rdb.Pipeline()
 	zRangeOpts := &redis.ZRangeBy{
 		Min: strconv.Itoa(int(start.Add(-within).Unix())),
-		Max: strconv.Itoa(int(start.Add(1 * time.Second).Unix())),
+		Max: strconv.Itoa(int(start.Unix())),
 	}
 
 	zRangeCmd := c.rdb.ZRangeByScoreWithScores(
