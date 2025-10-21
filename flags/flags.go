@@ -7,6 +7,7 @@ import (
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	ld "github.com/launchdarkly/go-server-sdk/v6"
+	"github.com/launchdarkly/go-server-sdk/v6/ldcomponents"
 
 	"github.com/replicate/go/logging"
 )
@@ -29,7 +30,8 @@ func Init(key string) {
 	log := logger.Sugar()
 
 	config := ld.Config{
-		Logging: configureLogger(logger),
+		Logging:    configureLogger(logger),
+		DataSource: ldcomponents.PollingDataSource().PollInterval(30 * time.Second),
 	}
 
 	if key == "" {
