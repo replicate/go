@@ -2,6 +2,7 @@ package flags
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -30,8 +31,11 @@ func Init(key string) {
 	log := logger.Sugar()
 
 	config := ld.Config{
-		Logging:    configureLogger(logger),
-		DataSource: ldcomponents.PollingDataSource().PollInterval(30 * time.Second),
+		Logging: configureLogger(logger),
+	}
+
+	if os.Getenv("LAUNCHDARKLY_POLLING_MODE") == "true" {
+		config.DataSource = ldcomponents.PollingDataSource().PollInterval(30 * time.Second)
 	}
 
 	if key == "" {
