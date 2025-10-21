@@ -2,11 +2,13 @@ package flags
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	ld "github.com/launchdarkly/go-server-sdk/v6"
+	"github.com/launchdarkly/go-server-sdk/v6/ldcomponents"
 
 	"github.com/replicate/go/logging"
 )
@@ -30,6 +32,10 @@ func Init(key string) {
 
 	config := ld.Config{
 		Logging: configureLogger(logger),
+	}
+
+	if os.Getenv("LAUNCHDARKLY_POLLING_MODE") == "true" {
+		config.DataSource = ldcomponents.PollingDataSource().PollInterval(30 * time.Second)
 	}
 
 	if key == "" {
