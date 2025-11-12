@@ -9,7 +9,7 @@ require (
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/hashicorp/go-rootcerts v1.0.2
-	github.com/launchdarkly/go-sdk-common/v3 v3.3.0
+	github.com/launchdarkly/go-sdk-common/v3 v3.4.0
 	github.com/launchdarkly/go-server-sdk/v6 v6.2.1
 	github.com/prometheus/client_golang v1.22.0
 	github.com/redis/go-redis/extra/redisotel/v9 v9.11.0
@@ -71,7 +71,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.0 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/multierr v1.11.0
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
