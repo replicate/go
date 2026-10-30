@@ -109,7 +109,10 @@ func (m mockWrapper) ExpectCacheFillWithLockErr(key string, err error) {
 }
 
 func (m mockWrapper) ExpectCacheFillNegative(key string) {
+	m.ExpectTxPipeline()
+	m.ExpectDel("cache:data:"+m.name+":"+key, "cache:fresh:"+m.name+":"+key).SetVal(0)
 	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
+	m.ExpectTxPipelineExec()
 }
 
 // Helper function for polling mock expectations
@@ -626,8 +629,11 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 	cacheMock.ExpectCacheFetchEmpty("elephant")
 	cacheMock.ExpectCacheFillNegative("elephant")
 
-	// Expectations for shadow client (negative write only)
+	// Expectations for shadow client (evict)
+	shadowMock.ExpectTxPipeline()
+	shadowMock.ExpectDel("cache:data:objects:elephant", "cache:fresh:objects:elephant").SetVal(0)
 	shadowMock.ExpectSet("cache:negative:objects:elephant", 1, negative).SetVal("OK")
+	shadowMock.ExpectTxPipelineExec()
 
 	// Trigger Get with fetcher returning ErrDoesNotExist
 	_, err := cache.Get(ctx, "elephant", func(_ context.Context, _ string) (t testObj, err error) {
@@ -718,8 +724,11 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 	shadowMock.Regexp().ExpectSet(".*", 1, fresh).SetErr(expectedErr)
 	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
 
-	// For cache.Get("missing", ...) -> setNegative
+	// For cache.Get("missing", ...) -> evict
+	shadowMock.ExpectTxPipeline()
+	shadowMock.Regexp().ExpectDel(".*", ".*").SetErr(expectedErr)
 	shadowMock.Regexp().ExpectSet(".*", 1, negative).SetErr(expectedErr)
+	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
 
 	// Setup primary client expectations upfront
 	cacheMock.ExpectCacheFill("elephant", testObj{Value: "shadow_failure_test"})
