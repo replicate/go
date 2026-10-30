@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/replicate/go/test"
 )
 
 type testObj struct {
@@ -759,4 +764,170 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 		// Returning nil signals the condition (an error occurred) is met.
 		return nil
 	}, "shadow mock expectations not met or did not error as expected")
+}
+
+const (
+	goneFresh    = 10 * time.Second
+	goneStale    = 30 * time.Minute
+	goneNegative = 10 * time.Second
+)
+
+type revocableSource struct {
+	gone  atomic.Bool
+	calls atomic.Int64
+}
+
+func (s *revocableSource) fetch(_ context.Context, _ string) (testObj, error) {
+	s.calls.Add(1)
+	if s.gone.Load() {
+		return testObj{}, fmt.Errorf("revoked: %w", ErrDoesNotExist)
+	}
+	return testObj{Value: "alice"}, nil
+}
+
+func fastForward(d time.Duration, mrs ...*miniredis.Miniredis) {
+	for _, mr := range mrs {
+		mr.FastForward(d)
+	}
+}
+
+func expireFreshAndAwaitRefresh(t *testing.T, c *Cache[testObj], key string, source *revocableSource, mrs ...*miniredis.Miniredis) {
+	t.Helper()
+
+	callsBefore := source.calls.Load()
+	fastForward(goneFresh+time.Second, mrs...)
+	_, _ = c.Get(context.Background(), key, source.fetch)
+
+	lockKey := c.keysFor(key).lock
+	assertEventually(t, func() error {
+		for _, mr := range mrs {
+			if mr.Exists(lockKey) {
+				return errors.New("refresh still in flight")
+			}
+		}
+		return nil
+	}, "background refresh did not finish")
+	require.EqualValues(t, 1, source.calls.Load()-callsBefore, "refresh did not consult the source")
+}
+
+func assertGoneAcrossNegativeExpiries(t *testing.T, c *Cache[testObj], key string, source *revocableSource, mrs ...*miniredis.Miniredis) {
+	t.Helper()
+
+	for i := range 3 {
+		for range 2 {
+			v, err := c.Get(context.Background(), key, source.fetch)
+			require.Zero(t, v, "round %d: Get served the old value", i)
+			require.ErrorIs(t, err, ErrDoesNotExist, "round %d", i)
+		}
+		fastForward(goneNegative+time.Second, mrs...)
+	}
+}
+
+func TestCacheStopsServingValueOnceSourceReportsItGone(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	var source revocableSource
+
+	require.NoError(t, c.Set(context.Background(), "tok", testObj{Value: "alice"}))
+	source.gone.Store(true)
+
+	expireFreshAndAwaitRefresh(t, c, "tok", &source, mr)
+	assertGoneAcrossNegativeExpiries(t, c, "tok", &source, mr)
+}
+
+func TestCacheStopsServingValueOnceSourceReportsItGoneWithoutNegativeCaching(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale)
+	var source revocableSource
+
+	require.NoError(t, c.Set(context.Background(), "tok", testObj{Value: "alice"}))
+	source.gone.Store(true)
+
+	expireFreshAndAwaitRefresh(t, c, "tok", &source, mr)
+	assertGoneAcrossNegativeExpiries(t, c, "tok", &source, mr)
+}
+
+func TestCacheStopsServingValueFromAnyBackendOnceSourceReportsItGone(t *testing.T) {
+	mr1, rdb1 := test.MiniRedis(t)
+	mr2, rdb2 := test.MiniRedis(t)
+	c := NewCacheMultipleBackends[testObj]([]redis.Cmdable{rdb1, rdb2}, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	var source revocableSource
+
+	require.NoError(t, c.Set(context.Background(), "tok", testObj{Value: "alice"}))
+	require.True(t, mr1.Exists(c.keysFor("tok").data))
+	require.True(t, mr2.Exists(c.keysFor("tok").data))
+	source.gone.Store(true)
+
+	expireFreshAndAwaitRefresh(t, c, "tok", &source, mr1, mr2)
+	assertGoneAcrossNegativeExpiries(t, c, "tok", &source, mr1, mr2)
+}
+
+func TestCacheShadowClientDropsValueOnceSourceReportsItGone(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	shadowMr, shadowRdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale,
+		WithNegativeCaching(goneNegative),
+		WithShadowWriteClient(shadowRdb, time.Second))
+	var source revocableSource
+	keys := c.keysFor("tok")
+
+	require.NoError(t, c.Set(context.Background(), "tok", testObj{Value: "alice"}))
+	assertEventually(t, func() error {
+		if !shadowMr.Exists(keys.data) {
+			return errors.New("shadow write has not landed")
+		}
+		return nil
+	}, "shadow client never received the value")
+	source.gone.Store(true)
+
+	expireFreshAndAwaitRefresh(t, c, "tok", &source, mr, shadowMr)
+
+	assertEventually(t, func() error {
+		if shadowMr.Exists(keys.data) {
+			return errors.New("shadow client still holds the value")
+		}
+		return nil
+	}, "shadow client kept the value after the source reported it gone")
+}
+
+type failDeletes struct{ armed atomic.Bool }
+
+func (*failDeletes) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (*failDeletes) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+
+func (h *failDeletes) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if h.armed.Load() {
+			for _, cmd := range cmds {
+				if cmd.Name() == "del" {
+					return errors.New("boom")
+				}
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func TestCacheReturnsSourceErrorWhenRedisRejectsEviction(t *testing.T) {
+	for name, opts := range map[string][]Option{
+		"with negative caching":    {WithNegativeCaching(goneNegative)},
+		"without negative caching": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, rdb := test.MiniRedis(t)
+			hook := &failDeletes{}
+			rdb.AddHook(hook)
+			hook.armed.Store(true)
+			c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, opts...)
+			var source revocableSource
+			source.gone.Store(true)
+
+			v, err := c.Get(context.Background(), "tok", source.fetch)
+
+			assert.ErrorIs(t, err, ErrDoesNotExist)
+			assert.NotContains(t, fmt.Sprint(err), "boom")
+			assert.Zero(t, v)
+		})
+	}
 }
