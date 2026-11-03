@@ -38,8 +38,9 @@ var (
 
 	// ErrDoesNotExist is returned if negative caching is enabled and the
 	// non-existence of the specified key has been cached. It must also be
-	// returned by cache fetchers when the specified key does not exist and
-	// negative caching is wanted.
+	// returned by cache fetchers when the specified key does not exist. The
+	// cache then evicts any value it holds for the key, and with negative
+	// caching enabled it remembers the non-existence.
 	ErrDoesNotExist = errors.New("requested item does not exist")
 
 	// ErrDisallowedCacheValue is thrown if a client attempts to set an entry in
@@ -220,12 +221,11 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 	value, err = fetcher(ctx, key)
 	if errors.Is(err, ErrDoesNotExist) {
 		span.SetAttributes(attribute.String("cache.result", "negative (caching nonexistence)"))
-		if cacheSetErr := c.setNegative(ctx, key); cacheSetErr != nil {
-			// Errors encountered while filling the cache are not returned to the
-			// caller: we don't want a cache availability problem to be exposed if the
-			// value was already successfully fetched.
-			recordError(ctx, cacheSetErr)
-			log.Warnw("cache set negative failed", "error", cacheSetErr)
+		if evictErr := c.evict(ctx, key); evictErr != nil {
+			// The caller needs the fetcher's ErrDoesNotExist, not a cache
+			// availability problem, so eviction errors are not returned.
+			recordError(ctx, evictErr)
+			log.Warnw("cache evict failed", "error", evictErr)
 		}
 		// we return the original err, so the caller can handle the
 		// ErrDoesNotExist
@@ -325,19 +325,42 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	return errors.Join(errs...)
 }
 
-func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
-	// If negative caching is not enabled, this is a no-op.
-	if c.opts.Negative == 0 {
+// evictOnClient deletes the value before it records non-existence, and not in
+// one transaction. Redis aborts a whole MULTI when it rejects a queued command,
+// for example a SET at maxmemory, which would keep the value.
+func (c *Cache[T]) evictOnClient(ctx context.Context, client redis.Cmdable, keys keys, negative bool) error {
+	if err := client.Del(ctx, keys.data, keys.fresh).Err(); err != nil {
+		return err
+	}
+	if !negative {
 		return nil
 	}
+	return client.Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+}
 
+func (c *Cache[T]) evict(ctx context.Context, key string) error {
 	log := logger.With(logging.GetFields(ctx)...).Sugar()
 	keys := c.keysFor(key)
+	negative := c.opts.Negative > 0
 
-	// Record non-existence sentinel in the cache
-	err := c.clients[0].Set(ctx, keys.negative, 1, c.opts.Negative).Err()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	l, err := c.acquireIfMultipleRedises(ctx, keys.lockMultiple, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := l.Release(ctx)
+		if err != nil {
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+		}
+	}()
 
-	// Shadow write if configured
+	errs := []error{}
+	for i, client := range c.clients {
+		errs = append(errs, c.evictOnClient(ctx, client, keys, negative && i == 0))
+	}
+
 	if c.opts.ShadowWriteClient != nil {
 		// Fire-and-forget shadow write
 		go func() {
@@ -348,21 +371,21 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 				ctx,
 				"cache.shadow_write",
 				trace.WithAttributes(c.spanAttributes(key)...),
-				trace.WithAttributes(attribute.String("cache.operation", "setNegative")),
+				trace.WithAttributes(attribute.String("cache.operation", "evict")),
 			)
 
 			defer span.End()
 
-			log.Debugw("performing shadow negative write", "key", key)
+			log.Debugw("performing shadow evict", "key", key)
 
-			if err := c.opts.ShadowWriteClient.Set(ctx, keys.negative, 1, c.opts.Negative).Err(); err != nil {
+			if err := c.evictOnClient(ctx, c.opts.ShadowWriteClient, keys, negative); err != nil {
 				recordError(ctx, err)
-				log.Warnw("shadow negative write failed", "key", key, "error", err)
+				log.Warnw("shadow write failed", "key", key, "error", err, "operation", "evict")
 			}
 		}()
 	}
 
-	return err
+	return errors.Join(errs...)
 }
 
 type _nullLock struct{}
