@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,10 +110,8 @@ func (m mockWrapper) ExpectCacheFillWithLockErr(key string, err error) {
 }
 
 func (m mockWrapper) ExpectCacheFillNegative(key string) {
-	m.ExpectTxPipeline()
 	m.ExpectDel("cache:data:"+m.name+":"+key, "cache:fresh:"+m.name+":"+key).SetVal(0)
 	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
-	m.ExpectTxPipelineExec()
 }
 
 // Helper function for polling mock expectations
@@ -630,10 +629,8 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 	cacheMock.ExpectCacheFillNegative("elephant")
 
 	// Expectations for shadow client (evict)
-	shadowMock.ExpectTxPipeline()
 	shadowMock.ExpectDel("cache:data:objects:elephant", "cache:fresh:objects:elephant").SetVal(0)
 	shadowMock.ExpectSet("cache:negative:objects:elephant", 1, negative).SetVal("OK")
-	shadowMock.ExpectTxPipelineExec()
 
 	// Trigger Get with fetcher returning ErrDoesNotExist
 	_, err := cache.Get(ctx, "elephant", func(_ context.Context, _ string) (t testObj, err error) {
@@ -724,11 +721,8 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 	shadowMock.Regexp().ExpectSet(".*", 1, fresh).SetErr(expectedErr)
 	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
 
-	// For cache.Get("missing", ...) -> evict
-	shadowMock.ExpectTxPipeline()
+	// For cache.Get("missing", ...) -> evict stops at the failed delete
 	shadowMock.Regexp().ExpectDel(".*", ".*").SetErr(expectedErr)
-	shadowMock.Regexp().ExpectSet(".*", 1, negative).SetErr(expectedErr)
-	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
 
 	// Setup primary client expectations upfront
 	cacheMock.ExpectCacheFill("elephant", testObj{Value: "shadow_failure_test"})
@@ -899,19 +893,34 @@ func TestCacheShadowClientDropsValueOnceSourceReportsItGone(t *testing.T) {
 	}, "shadow client kept the value after the source reported it gone")
 }
 
-type failDeletes struct{ armed atomic.Bool }
+// failDeletes rejects any DEL of cache data, sent alone or in a pipeline.
+type failDeletes struct {
+	armed atomic.Bool
+	hits  atomic.Int32
+}
 
 func (*failDeletes) DialHook(next redis.DialHook) redis.DialHook { return next }
 
-func (*failDeletes) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+func (h *failDeletes) rejects(cmd redis.Cmder) bool {
+	return h.armed.Load() && cmd.Name() == "del" && strings.Contains(fmt.Sprint(cmd.Args()), "cache:data:")
+}
+
+func (h *failDeletes) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.rejects(cmd) {
+			h.hits.Add(1)
+			return errors.New("boom")
+		}
+		return next(ctx, cmd)
+	}
+}
 
 func (h *failDeletes) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
-		if h.armed.Load() {
-			for _, cmd := range cmds {
-				if cmd.Name() == "del" {
-					return errors.New("boom")
-				}
+		for _, cmd := range cmds {
+			if h.rejects(cmd) {
+				h.hits.Add(1)
+				return errors.New("boom")
 			}
 		}
 		return next(ctx, cmds)
@@ -937,6 +946,58 @@ func TestCacheReturnsSourceErrorWhenRedisRejectsEviction(t *testing.T) {
 			assert.ErrorIs(t, err, ErrDoesNotExist)
 			assert.NotContains(t, fmt.Sprint(err), "boom")
 			assert.Zero(t, v)
+			assert.Positive(t, hook.hits.Load(), "the delete never reached Redis")
 		})
 	}
+}
+
+// rejectNegativeMarker rejects SET on a negative key, as Redis does for writes
+// at maxmemory. Redis aborts a whole MULTI when it rejects a queued command, so
+// a transaction that holds the rejected SET runs none of its commands.
+type rejectNegativeMarker struct{ hits atomic.Int32 }
+
+func (*rejectNegativeMarker) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (*rejectNegativeMarker) rejects(cmd redis.Cmder) bool {
+	args := cmd.Args()
+	return cmd.Name() == "set" && len(args) > 1 && strings.HasPrefix(fmt.Sprint(args[1]), "cache:negative:")
+}
+
+func (h *rejectNegativeMarker) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.rejects(cmd) {
+			h.hits.Add(1)
+			err := errors.New("OOM command not allowed when used memory > 'maxmemory'")
+			cmd.SetErr(err)
+			return err
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *rejectNegativeMarker) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if h.rejects(cmd) {
+				h.hits.Add(1)
+				return errors.New("EXECABORT Transaction discarded because of previous errors")
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func TestCacheDropsValueWhenRedisRejectsNegativeMarker(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	hook := &rejectNegativeMarker{}
+	rdb.AddHook(hook)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	require.NoError(t, c.Set(context.Background(), "tok", testObj{Value: "alice"}))
+	var source revocableSource
+	source.gone.Store(true)
+
+	expireFreshAndAwaitRefresh(t, c, "tok", &source, mr)
+
+	require.Positive(t, hook.hits.Load(), "the negative marker write never reached Redis")
+	require.False(t, mr.Exists(c.keysFor("tok").data), "a rejected negative marker kept the value")
 }

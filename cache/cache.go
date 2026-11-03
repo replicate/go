@@ -325,15 +325,17 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	return errors.Join(errs...)
 }
 
+// evictOnClient deletes the value before it records non-existence, and not in
+// one transaction. Redis aborts a whole MULTI when it rejects a queued command,
+// for example a SET at maxmemory, which would keep the value.
 func (c *Cache[T]) evictOnClient(ctx context.Context, client redis.Cmdable, keys keys, negative bool) error {
-	pipe := client.TxPipeline()
-	pipe.Del(ctx, keys.data, keys.fresh)
-	if negative {
-		pipe.Set(ctx, keys.negative, 1, c.opts.Negative)
+	if err := client.Del(ctx, keys.data, keys.fresh).Err(); err != nil {
+		return err
 	}
-
-	_, err := pipe.Exec(ctx)
-	return err
+	if !negative {
+		return nil
+	}
+	return client.Set(ctx, keys.negative, 1, c.opts.Negative).Err()
 }
 
 func (c *Cache[T]) evict(ctx context.Context, key string) error {
