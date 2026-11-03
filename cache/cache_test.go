@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/replicate/go/test"
 )
@@ -109,9 +113,46 @@ func (m mockWrapper) ExpectCacheFillWithLockErr(key string, err error) {
 	m.Regexp().ExpectEvalSha(`.*`, []string{lockMultiple}, `.*`).SetVal(int64(1))
 }
 
+func (m mockWrapper) ExpectObservedGeneration(key string) {
+	m.ExpectGet("cache:gen:" + m.name + ":" + key).SetErr(redis.Nil)
+}
+
+func (m mockWrapper) ExpectFillIfCurrent(key string, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	gen := "cache:gen:" + m.name + ":" + key
+	m.ExpectObservedGeneration(key)
+	m.ExpectEval(writeIfCurrentScript, []string{
+		gen,
+		"cache:negative:" + m.name + ":" + key,
+		"cache:data:" + m.name + ":" + key,
+		"cache:fresh:" + m.name + ":" + key,
+	}, "", string(data), m.stale.Milliseconds(), m.fresh.Milliseconds()).SetVal(int64(1))
+}
+
+// testGeneration is the eviction generation that pinGeneration fixes, so mock
+// tests can expect exact Redis commands.
+const testGeneration = "test-generation"
+
+func pinGeneration(t *testing.T) {
+	t.Helper()
+	previous := newGeneration
+	newGeneration = func() string { return testGeneration }
+	t.Cleanup(func() { newGeneration = previous })
+}
+
 func (m mockWrapper) ExpectCacheFillNegative(key string) {
-	m.ExpectDel("cache:data:"+m.name+":"+key, "cache:fresh:"+m.name+":"+key).SetVal(0)
-	m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
+	m.ExpectObservedGeneration(key)
+	m.ExpectEval(evictScript, []string{
+		"cache:data:" + m.name + ":" + key,
+		"cache:fresh:" + m.name + ":" + key,
+		"cache:gen:" + m.name + ":" + key,
+	}, testGeneration, generationTTL.Milliseconds()).SetVal(int64(1))
+	if m.negative > 0 {
+		m.ExpectSet("cache:negative:"+m.name+":"+key, 1, m.negative).SetVal("OK")
+	}
 }
 
 // Helper function for polling mock expectations
@@ -160,7 +201,7 @@ func TestCacheFetchesWhenNotInCache(t *testing.T) {
 	obj := testObj{Value: "value_for:elephant"}
 
 	cacheMock.ExpectCacheFetchEmpty("elephant")
-	cacheMock.ExpectCacheFill("elephant", obj)
+	cacheMock.ExpectFillIfCurrent("elephant", obj)
 
 	v, err := cache.Get(ctx, "elephant", fetchTestObj)
 
@@ -343,6 +384,7 @@ func TestCacheReturnsDoesNotExistForNegativeCache(t *testing.T) {
 // If the fetcher returns ErrDoesNotExist and negative caching is configured, we
 // store non-existence in the cache and return ErrDoesNotExist.
 func TestCacheReturnsDoesNotExistForNegativeCacheWithFetch(t *testing.T) {
+	pinGeneration(t)
 	ctx := context.Background()
 
 	fresh := 10 * time.Second
@@ -545,14 +587,16 @@ func TestCacheWithShadowWriteClient(t *testing.T) {
 
 	// Expectations for primary client
 	cacheMock.ExpectCacheFetchEmpty("elephant")
-	cacheMock.ExpectCacheFill("elephant", obj)
+	cacheMock.ExpectFillIfCurrent("elephant", obj)
 
-	// Expectations for shadow client (write only)
-	shadowMock.ExpectTxPipeline()
-	shadowMock.ExpectDel("cache:negative:objects:elephant").SetVal(0)
-	shadowMock.ExpectSet("cache:data:objects:elephant", `{"value":"value_for:elephant"}`, stale).SetVal("OK")
-	shadowMock.ExpectSet("cache:fresh:objects:elephant", 1, fresh).SetVal("OK")
-	shadowMock.ExpectTxPipelineExec()
+	// Expectations for shadow client (conditional write only)
+	shadowMock.ExpectGet("cache:gen:objects:elephant").SetErr(redis.Nil)
+	shadowMock.ExpectEval(writeIfCurrentScript, []string{
+		"cache:gen:objects:elephant",
+		"cache:negative:objects:elephant",
+		"cache:data:objects:elephant",
+		"cache:fresh:objects:elephant",
+	}, "", `{"value":"value_for:elephant"}`, stale.Milliseconds(), fresh.Milliseconds()).SetVal(int64(1))
 
 	// Trigger Get -> cache miss -> fill
 	v, err := cache.Get(ctx, "elephant", fetchTestObj)
@@ -603,6 +647,7 @@ func TestCacheWithShadowWriteClientDirectSet(t *testing.T) {
 }
 
 func TestCacheWithShadowWriteClientNegative(t *testing.T) {
+	pinGeneration(t)
 	ctx := context.Background()
 	fresh := 10 * time.Second
 	stale := 30 * time.Second
@@ -629,7 +674,12 @@ func TestCacheWithShadowWriteClientNegative(t *testing.T) {
 	cacheMock.ExpectCacheFillNegative("elephant")
 
 	// Expectations for shadow client (evict)
-	shadowMock.ExpectDel("cache:data:objects:elephant", "cache:fresh:objects:elephant").SetVal(0)
+	shadowMock.ExpectGet("cache:gen:objects:elephant").SetErr(redis.Nil)
+	shadowMock.ExpectEval(evictScript, []string{
+		"cache:data:objects:elephant",
+		"cache:fresh:objects:elephant",
+		"cache:gen:objects:elephant",
+	}, testGeneration, generationTTL.Milliseconds()).SetVal(int64(1))
 	shadowMock.ExpectSet("cache:negative:objects:elephant", 1, negative).SetVal("OK")
 
 	// Trigger Get with fetcher returning ErrDoesNotExist
@@ -686,6 +736,7 @@ func TestCacheMultipleBackendsWithShadowWriteClient(t *testing.T) {
 }
 
 func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
+	pinGeneration(t)
 	ctx := context.Background()
 	fresh := 10 * time.Second
 	stale := 30 * time.Second
@@ -714,20 +765,27 @@ func TestCacheOperationsSucceedWhenShadowClientFails(t *testing.T) {
 	shadowMock.Regexp().ExpectSet(".*", 1, fresh).SetErr(expectedErr)
 	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
 
-	// For cache.Get("elephant_get", ...) -> set
-	shadowMock.ExpectTxPipeline()
-	shadowMock.Regexp().ExpectDel(".*").SetErr(expectedErr)
-	shadowMock.Regexp().ExpectSet(".*", ".*", stale).SetErr(expectedErr)
-	shadowMock.Regexp().ExpectSet(".*", 1, fresh).SetErr(expectedErr)
-	shadowMock.ExpectTxPipelineExec().SetErr(expectedErr)
+	// For cache.Get("elephant_get", ...) -> conditional fill
+	shadowMock.ExpectGet("cache:gen:objects:elephant_get").SetErr(redis.Nil)
+	shadowMock.ExpectEval(writeIfCurrentScript, []string{
+		"cache:gen:objects:elephant_get",
+		"cache:negative:objects:elephant_get",
+		"cache:data:objects:elephant_get",
+		"cache:fresh:objects:elephant_get",
+	}, "", `{"value":"value_for:elephant_get"}`, stale.Milliseconds(), fresh.Milliseconds()).SetErr(expectedErr)
 
-	// For cache.Get("missing", ...) -> evict stops at the failed delete
-	shadowMock.Regexp().ExpectDel(".*", ".*").SetErr(expectedErr)
+	// For cache.Get("missing", ...) -> evict
+	shadowMock.ExpectGet("cache:gen:objects:missing").SetErr(redis.Nil)
+	shadowMock.ExpectEval(evictScript, []string{
+		"cache:data:objects:missing",
+		"cache:fresh:objects:missing",
+		"cache:gen:objects:missing",
+	}, testGeneration, generationTTL.Milliseconds()).SetErr(expectedErr)
 
 	// Setup primary client expectations upfront
 	cacheMock.ExpectCacheFill("elephant", testObj{Value: "shadow_failure_test"})
 	cacheMock.ExpectCacheFetchEmpty("elephant_get")
-	cacheMock.ExpectCacheFill("elephant_get", testObj{Value: "value_for:elephant_get"})
+	cacheMock.ExpectFillIfCurrent("elephant_get", testObj{Value: "value_for:elephant_get"})
 	cacheMock.ExpectCacheFetchEmpty("missing")
 	cacheMock.ExpectCacheFillNegative("missing")
 
@@ -893,7 +951,6 @@ func TestCacheShadowClientDropsValueOnceSourceReportsItGone(t *testing.T) {
 	}, "shadow client kept the value after the source reported it gone")
 }
 
-// failDeletes rejects any DEL of cache data, sent alone or in a pipeline.
 type failDeletes struct {
 	armed atomic.Bool
 	hits  atomic.Int32
@@ -902,7 +959,15 @@ type failDeletes struct {
 func (*failDeletes) DialHook(next redis.DialHook) redis.DialHook { return next }
 
 func (h *failDeletes) rejects(cmd redis.Cmder) bool {
-	return h.armed.Load() && cmd.Name() == "del" && strings.Contains(fmt.Sprint(cmd.Args()), "cache:data:")
+	if !h.armed.Load() {
+		return false
+	}
+	switch cmd.Name() {
+	case "del", "unlink", "eval", "evalsha":
+		return strings.Contains(fmt.Sprint(cmd.Args()), "cache:data:")
+	default:
+		return false
+	}
 }
 
 func (h *failDeletes) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
@@ -927,6 +992,47 @@ func (h *failDeletes) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.
 	}
 }
 
+func TestCacheLateFillDoesNotRestoreRevokedValue(t *testing.T) {
+	_, rdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var calls atomic.Int32
+	fetch := func(context.Context, string) (testObj, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-release
+			return testObj{Value: "alice"}, nil
+		}
+		return testObj{}, ErrDoesNotExist
+	}
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := c.Get(context.Background(), "tok", fetch)
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fill did not start")
+	}
+	_, err := c.Get(context.Background(), "tok", fetch)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+	once.Do(func() { close(release) })
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("late fill did not finish")
+	}
+
+	v, err := c.Get(context.Background(), "tok", fetch)
+	require.Zero(t, v)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+}
+
 func TestCacheReturnsSourceErrorWhenRedisRejectsEviction(t *testing.T) {
 	for name, opts := range map[string][]Option{
 		"with negative caching":    {WithNegativeCaching(goneNegative)},
@@ -946,9 +1052,106 @@ func TestCacheReturnsSourceErrorWhenRedisRejectsEviction(t *testing.T) {
 			assert.ErrorIs(t, err, ErrDoesNotExist)
 			assert.NotContains(t, fmt.Sprint(err), "boom")
 			assert.Zero(t, v)
-			assert.Positive(t, hook.hits.Load(), "the delete never reached Redis")
+			assert.Positive(t, hook.hits.Load())
 		})
 	}
+}
+
+func TestCacheGenerationExpires(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	var source revocableSource
+	source.gone.Store(true)
+
+	_, err := c.Get(context.Background(), "tok", source.fetch)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+	ttl := mr.TTL(c.keysFor("tok").gen)
+	require.Greater(t, ttl, maxFillAge)
+	require.LessOrEqual(t, ttl, 2*maxFillAge)
+}
+
+// blockingFill starts a fill whose fetch waits until released and then returns
+// a value, so a test can revoke the key while that fetch is in flight.
+func blockingFill(ctx context.Context, t *testing.T, c *Cache[testObj], key string) (release func(), result <-chan error) {
+	t.Helper()
+	started, gate := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.fill(ctx, key, func(context.Context, string) (testObj, error) {
+			close(started)
+			<-gate
+			return testObj{Value: "alice"}, nil
+		})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fill did not start")
+	}
+	return release, done
+}
+
+func gone(context.Context, string) (testObj, error) { return testObj{}, ErrDoesNotExist }
+
+func TestCacheLateFillAfterGenerationExpiryDoesNotRestoreValue(t *testing.T) {
+	mr, rdb := test.MiniRedis(t)
+	ctx := context.Background()
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	keys := c.keysFor("tok")
+
+	_, err := c.Get(ctx, "tok", gone)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+	mr.FastForward(goneNegative + time.Second)
+
+	release, result := blockingFill(ctx, t, c, "tok")
+	mr.FastForward(time.Hour)
+	require.False(t, mr.Exists(keys.gen), "generation should have expired")
+	_, err = c.Get(ctx, "tok", gone)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+	release()
+	require.NoError(t, <-result)
+
+	require.False(t, mr.Exists(keys.data), "a fill that began before the revocation restored the value after the generation key expired")
+}
+
+func TestCacheLateFillRecordsDiscard(t *testing.T) {
+	_, rdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithNegativeCaching(goneNegative))
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	ctx, span := provider.Tracer("test").Start(context.Background(), "fill")
+
+	release, result := blockingFill(ctx, t, c, "tok")
+	_, err := c.Get(context.Background(), "tok", gone)
+	require.ErrorIs(t, err, ErrDoesNotExist)
+	release()
+	require.NoError(t, <-result)
+	span.End()
+
+	ended := recorder.Ended()
+	require.Len(t, ended, 1)
+	require.Contains(t, ended[0].Attributes(), attribute.String("cache.fill_discarded", "generation_changed"))
+}
+
+func TestCacheShadowFillUsesShadowGeneration(t *testing.T) {
+	_, rdb := test.MiniRedis(t)
+	shadowMr, shadowRdb := test.MiniRedis(t)
+	c := NewCache[testObj](rdb, "auth", goneFresh, goneStale, WithShadowWriteClient(shadowRdb, time.Second))
+	require.NoError(t, rdb.Set(context.Background(), c.keysFor("tok").gen, 7, time.Minute).Err())
+
+	v, err := c.Get(context.Background(), "tok", fetchTestObj)
+	require.NoError(t, err)
+	require.Equal(t, "value_for:tok", v.Value)
+	assertEventually(t, func() error {
+		if !shadowMr.Exists(c.keysFor("tok").data) {
+			return errors.New("shadow did not accept a fill at its own generation")
+		}
+		return nil
+	}, "shadow write was rejected because it used the primary generation")
 }
 
 // rejectNegativeMarker rejects SET on a negative key, as Redis does for writes

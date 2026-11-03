@@ -12,6 +12,7 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -218,6 +219,8 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 	log := logger.With(logging.GetFields(ctx)...).Sugar()
 	span := trace.SpanFromContext(ctx)
 
+	started := time.Now()
+	snap, snapErr := c.generationSnapshot(ctx, key)
 	value, err = fetcher(ctx, key)
 	if errors.Is(err, ErrDoesNotExist) {
 		span.SetAttributes(attribute.String("cache.result", "negative (caching nonexistence)"))
@@ -237,7 +240,18 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 	}
 
 	span.SetAttributes(attribute.String("cache.result", "success (caching value)"))
-	err = c.set(ctx, key, value)
+	if time.Since(started) > maxFillAge {
+		span.SetAttributes(attribute.String(fillDiscardedAttr, "max_age"))
+		log.Warnw("cache fill exceeded maximum age", "age", time.Since(started))
+		return value, nil
+	}
+	if snapErr != nil {
+		span.SetAttributes(attribute.String(fillDiscardedAttr, "generation_read_failed"))
+		recordError(ctx, snapErr)
+		log.Warnw("cache generation read failed", "error", snapErr)
+		return value, nil
+	}
+	err = c.setIfCurrent(ctx, key, value, snap)
 	if err != nil {
 		// Errors encountered while filling the cache are not returned to the
 		// caller: we don't want a cache availability problem to be exposed if the
@@ -247,6 +261,123 @@ func (c *Cache[T]) fill(ctx context.Context, key string, fetcher Fetcher[T]) (va
 	}
 
 	return value, nil
+}
+
+// A fill reads the key's generation before it fetches and writes only if the
+// generation is unchanged. Eviction replaces the generation with a random
+// value, so a fill that began before an eviction never matches, even after the
+// generation key expires and a later eviction recreates it.
+//
+// generationTTL must outlive maxFillAge plus the 5 second write lock. When an
+// eviction's generation expires, every fill that began before that eviction is
+// then old enough for the maxFillAge check to drop it.
+const (
+	maxFillAge        = 2 * time.Minute
+	generationTTL     = 2 * maxFillAge
+	fillDiscardedAttr = "cache.fill_discarded"
+)
+
+// newGeneration returns a value that never repeats. Tests replace it to get
+// predictable Redis commands.
+var newGeneration = rand.Text
+
+type generationSnapshot struct {
+	primary  []string
+	shadow   string
+	shadowOK bool
+}
+
+func (c *Cache[T]) generationSnapshot(ctx context.Context, key string) (generationSnapshot, error) {
+	keys := c.keysFor(key)
+	snap := generationSnapshot{primary: make([]string, len(c.clients))}
+	for i, client := range c.clients {
+		generation, err := generationValue(ctx, client, keys.gen)
+		if err != nil {
+			return snap, err
+		}
+		snap.primary[i] = generation
+	}
+	if c.opts.ShadowWriteClient == nil {
+		return snap, nil
+	}
+	generation, err := generationValue(ctx, c.opts.ShadowWriteClient, keys.gen)
+	if err != nil {
+		return snap, nil
+	}
+	snap.shadow = generation
+	snap.shadowOK = true
+	return snap, nil
+}
+
+func generationValue(ctx context.Context, client redis.Cmdable, key string) (string, error) {
+	v, err := client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
+}
+
+const writeIfCurrentScript = `
+local current = redis.call('GET', KEYS[1]) or ''
+if current ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[2])
+redis.call('SET', KEYS[3], ARGV[2], 'PX', ARGV[3])
+redis.call('SET', KEYS[4], '1', 'PX', ARGV[4])
+return 1
+`
+
+func (c *Cache[T]) setIfCurrent(ctx context.Context, key string, value T, snap generationSnapshot) error {
+	if reflect.ValueOf(value).IsZero() {
+		return ErrDisallowedCacheValue
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	keys := c.keysFor(key)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	l, err := c.acquireIfMultipleRedises(ctx, keys.lockMultiple, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := l.Release(ctx); err != nil {
+			recordError(ctx, fmt.Errorf("error releasing update lock: %w", err))
+		}
+	}()
+
+	errs := make([]error, 0, len(c.clients))
+	discarded := false
+	for i, client := range c.clients {
+		written, err := c.writeIfCurrent(ctx, client, keys, snap.primary[i], data)
+		discarded = discarded || (err == nil && !written)
+		errs = append(errs, err)
+	}
+	if discarded {
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String(fillDiscardedAttr, "generation_changed"))
+	}
+	if c.opts.ShadowWriteClient != nil && snap.shadowOK {
+		shadowObserved := snap.shadow
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), c.opts.ShadowWriteTimeout)
+			defer cancel()
+			ctx, span := tracer.Start(ctx, "cache.shadow_write", trace.WithAttributes(c.spanAttributes(key)...), trace.WithAttributes(attribute.String("cache.operation", "set")))
+			defer span.End()
+			written, err := c.writeIfCurrent(ctx, c.opts.ShadowWriteClient, keys, shadowObserved, data)
+			if err != nil {
+				recordError(ctx, err)
+			} else if !written {
+				span.SetAttributes(attribute.String(fillDiscardedAttr, "generation_changed"))
+			}
+		}()
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Cache[T]) writeIfCurrent(ctx context.Context, client redis.Cmdable, keys keys, observed string, data []byte) (bool, error) {
+	n, err := client.Eval(ctx, writeIfCurrentScript, []string{keys.gen, keys.negative, keys.data, keys.fresh}, observed, string(data), c.opts.Stale.Milliseconds(), c.opts.Fresh.Milliseconds()).Int64()
+	return n == 1, err
 }
 
 // setOnClient handles the entire transaction pipeline process for setting cache data on a single Redis client
@@ -325,11 +456,14 @@ func (c *Cache[T]) set(ctx context.Context, key string, value T) error {
 	return errors.Join(errs...)
 }
 
-// evictOnClient deletes the value before it records non-existence, and not in
-// one transaction. Redis aborts a whole MULTI when it rejects a queued command,
-// for example a SET at maxmemory, which would keep the value.
-func (c *Cache[T]) evictOnClient(ctx context.Context, client redis.Cmdable, keys keys, negative bool) error {
-	if err := client.Del(ctx, keys.data, keys.fresh).Err(); err != nil {
+const evictScript = `
+redis.call('DEL', KEYS[1], KEYS[2])
+redis.call('SET', KEYS[3], ARGV[1], 'PX', ARGV[2])
+return 1
+`
+
+func (c *Cache[T]) evictOnClient(ctx context.Context, client redis.Cmdable, keys keys, generation string, negative bool) error {
+	if err := client.Eval(ctx, evictScript, []string{keys.data, keys.fresh, keys.gen}, generation, generationTTL.Milliseconds()).Err(); err != nil {
 		return err
 	}
 	if !negative {
@@ -342,6 +476,7 @@ func (c *Cache[T]) evict(ctx context.Context, key string) error {
 	log := logger.With(logging.GetFields(ctx)...).Sugar()
 	keys := c.keysFor(key)
 	negative := c.opts.Negative > 0
+	generation := newGeneration()
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -358,7 +493,7 @@ func (c *Cache[T]) evict(ctx context.Context, key string) error {
 
 	errs := []error{}
 	for i, client := range c.clients {
-		errs = append(errs, c.evictOnClient(ctx, client, keys, negative && i == 0))
+		errs = append(errs, c.evictOnClient(ctx, client, keys, generation, negative && i == 0))
 	}
 
 	if c.opts.ShadowWriteClient != nil {
@@ -378,7 +513,7 @@ func (c *Cache[T]) evict(ctx context.Context, key string) error {
 
 			log.Debugw("performing shadow evict", "key", key)
 
-			if err := c.evictOnClient(ctx, c.opts.ShadowWriteClient, keys, negative); err != nil {
+			if err := c.evictOnClient(ctx, c.opts.ShadowWriteClient, keys, generation, negative); err != nil {
 				recordError(ctx, err)
 				log.Warnw("shadow write failed", "key", key, "error", err, "operation", "evict")
 			}
@@ -458,6 +593,7 @@ type keys struct {
 	lock         string
 	lockMultiple string
 	negative     string
+	gen          string
 }
 
 func (c *Cache[T]) keysFor(key string) keys {
@@ -467,6 +603,7 @@ func (c *Cache[T]) keysFor(key string) keys {
 		lock:         fmt.Sprintf("cache:lock:%s:%s", c.name, key),
 		lockMultiple: fmt.Sprintf("cache:lock-multiple:%s:%s", c.name, key),
 		negative:     fmt.Sprintf("cache:negative:%s:%s", c.name, key),
+		gen:          fmt.Sprintf("cache:gen:%s:%s", c.name, key),
 	}
 }
 
